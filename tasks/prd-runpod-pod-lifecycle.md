@@ -128,27 +128,37 @@ This feature enables autopod to programmatically manage the lifecycle of RunPod 
 
 ### FR2: Pod Creation
 
-**FR2.1:** The system must query RunPod API for available GPU types with filtering:
-- Filter by cloud type (secure/community, default: secure)
-- Filter by region (default: North America or user's locale)
-- Filter by network speed (high/extreme preferred)
-- Filter by CUDA version (optional, e.g., >= 12.8)
-- Show only relevant GPUs (4-5 options max)
+**Design Philosophy:** V1 should be useful and user-friendly (Rich library) while supporting full CLI automation. Implementation details should be flexible based on RunPod API capabilities discovered during development.
 
-**FR2.2:** The system must present GPU options interactively with:
-- GPU name (e.g., "RTX A40", "RTX 4090")
-- VRAM amount
-- Cost per hour
-- Availability status
-- Network speed rating
-- CUDA version
+**FR2.1:** The system must use sensible defaults:
+- Default GPU: RTX A40 (preferred) with fallback to A6000, A5000
+- Default region: North America
+- Default cloud type: Secure Cloud
+- Default template: `runpod/comfyui:latest`
+- Defaults configurable in `~/.autopod/config.json`
 
-**FR2.3:** The system must allow user to select:
-- GPU type
-- GPU count (1-N based on availability)
-- ComfyUI template (default: `runpod/comfyui:latest`)
-- Network volume ID (optional, default: none)
-- Region (if not using default)
+**FR2.2:** The system must support full CLI argument control for automation:
+- `--gpu <type>` - Specify GPU type
+- `--gpu-count <N>` - Number of GPUs
+- `--template <name>` - Custom template
+- `--volume <id>` - Network volume (optional)
+- `--cuda <version>` - CUDA version filter (e.g., ">=12.8")
+- Other relevant flags as discovered during API integration
+
+**FR2.3:** The system must provide user-friendly interactive selection using Rich:
+- Display GPU options in nicely formatted Rich table
+- Show relevant details (GPU type, VRAM, cost/hr, availability)
+- Provide simple preset filters (implementation flexible):
+  - Examples: "Show favorites", "Filter by CUDA version", "Show all"
+  - Exact filter options determined based on RunPod API capabilities
+- Simple selection mechanism (numbered list, keyboard controls, etc.)
+- Clear confirmation before creating pod
+
+**FR2.4:** The system must be flexible in implementation:
+- Adapt GPU listing based on what RunPod API provides efficiently
+- Balance between showing enough info vs overwhelming user
+- Prioritize good UX over rigid specifications
+- **Goal:** User can quickly find and select appropriate GPU without memorizing flags
 
 **FR2.4:** The system must show estimated cost per hour before creating pod
 
@@ -320,40 +330,43 @@ autopod logs --full
 
 ### Interactive GPU Selection (Example)
 
-```
-Select Cloud Type:
-  1. Secure Cloud (recommended, more reliable)
-  2. Community Cloud (cheaper, variable availability)
-[1-2]: 1
+**Simple default flow:**
+```bash
+$ autopod connect
 
-Select Region:
-  1. North America (default)
-  2. Europe
-  3. Asia Pacific
-[1-3]: 1
-
-Filtering: Secure Cloud | North America | Network: High+ | CUDA: Any
-
-Available GPUs:
-┌─────────────┬──────┬──────────┬──────────────┬─────────┬──────┐
-│ GPU Type    │ VRAM │ Cost/hr  │ Available    │ Network │ CUDA │
-├─────────────┼──────┼──────────┼──────────────┼─────────┼──────┤
-│ RTX A5000   │ 24GB │ $0.27    │ ✓ High       │ High    │ 12.4 │
-│ RTX A40     │ 48GB │ $0.40    │ ✓ Medium     │ Extreme │ 12.4 │
-│ RTX 3090    │ 24GB │ $0.46    │ ✓ Low        │ High    │ 12.1 │
-│ RTX A6000   │ 48GB │ $0.49    │ ✓ High       │ Extreme │ 12.4 │
-└─────────────┴──────┴──────────┴──────────────┴─────────┴──────┘
-
-Select GPU: [↑↓ arrows, Enter to confirm]
-GPU Count: 2
-Network Volume (optional, press Enter to skip):
-
-Estimated cost: $0.80/hr (2x RTX A40)
-Confirm? [y/N]: y
+Using defaults: RTX A40 | North America | Secure Cloud
+Checking availability... ✓ Available
 
 Creating pod: autopod-2025-11-08-001
+→ GPU: RTX A40 (48GB)
+→ Cost: $0.40/hr
 → Requesting pod... ⟳
 ```
+
+**Interactive selection with Rich table:**
+```bash
+$ autopod connect --interactive
+
+Checking availability (North America, Secure Cloud)...
+
+Available GPUs:
+┌───┬─────────────┬──────┬──────────┬───────────┐
+│ # │ GPU Type    │ VRAM │ Cost/hr  │ Available │
+├───┼─────────────┼──────┼──────────┼───────────┤
+│ 1 │ RTX A40     │ 48GB │ $0.40    │ 12 units  │
+│ 2 │ RTX A6000   │ 48GB │ $0.49    │ 5 units   │
+│ 3 │ RTX A5000   │ 24GB │ $0.27    │ 8 units   │
+└───┴─────────────┴──────┴──────────┴───────────┘
+
+Select [1-3]: 1
+GPU Count [1]: 1
+
+Confirm: 1x RTX A40 @ $0.40/hr? [Y/n]: y
+
+Creating pod: autopod-2025-11-08-001...
+```
+
+**Note:** Exact UI implementation flexible based on RunPod API capabilities discovered during development. Future V2 will read pod requirements directly from job ticket JSON.
 
 ### Config File Format
 
@@ -572,6 +585,23 @@ logger.exception("Pod creation failed", exc_info=True)
 2. **Encrypted Disk:** Does RunPod API support encrypted disk option? If so, should we expose it? (Defer to V2 unless easy to add)
 
 3. **Custom Port Forwarding:** RunPod allows custom port mapping - should we support in V1? (Defer to V2)
+
+**FUTURE DIRECTION (V2+):**
+
+Job ticket JSON files will specify pod requirements, eliminating need for manual GPU selection during automation:
+
+```json
+{
+  "job_id": "job-001",
+  "pod_requirements": {
+    "min_vram_gb": 48,
+    "cuda_version": ">=12.8",
+    "preferred_gpus": ["RTX A40", "RTX A6000"]
+  }
+}
+```
+
+This enables fully automated pod creation from job queue. V1 manual selection UI still needed for ad-hoc pod creation and testing.
 
 ---
 
