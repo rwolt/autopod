@@ -704,11 +704,16 @@ autopod/
 ├── src/                   # Source code (TBD)
 │   ├── autopod/          # Main package
 │   │   ├── cli.py        # CLI interface (Rich-based)
-│   │   ├── runpod.py     # RunPod API client
+│   │   ├── providers/    # Provider abstraction layer
+│   │   │   ├── base.py   # Abstract Provider interface
+│   │   │   ├── runpod.py # RunPod implementation
+│   │   │   └── vastai.py # Vast.ai implementation (future)
 │   │   ├── comfyui.py    # ComfyUI API client
 │   │   ├── ssh.py        # SSH tunnel management
 │   │   ├── monitor.py    # Job monitoring (WebSocket)
-│   │   └── templates.py  # Workflow template handling
+│   │   ├── templates.py  # Workflow template handling
+│   │   ├── config.py     # Config management
+│   │   └── logging.py    # Logging setup
 │   └── tests/            # Test files
 ├── templates/             # ComfyUI workflow templates (API format)
 │   ├── img2vid-basic.json
@@ -718,6 +723,298 @@ autopod/
 ├── inputs/                # Local input files (V1)
 └── outputs/               # Local output files (V1)
 ```
+
+---
+
+## Provider Abstraction Architecture
+
+### Design Principle
+
+autopod is designed to support multiple GPU cloud providers (RunPod, Vast.ai, etc.) without requiring significant refactoring. The provider abstraction layer ensures clean separation of concerns.
+
+### Provider Interface
+
+All providers must implement a common interface defined in `src/autopod/providers/base.py`:
+
+```python
+from abc import ABC, abstractmethod
+from typing import Dict, Optional
+
+class CloudProvider(ABC):
+    """Abstract base class for GPU cloud providers"""
+
+    @abstractmethod
+    def authenticate(self, api_key: str) -> bool:
+        """Validate API credentials"""
+        pass
+
+    @abstractmethod
+    def get_gpu_availability(self, gpu_type: str) -> Dict:
+        """Check if specific GPU type is available, return details"""
+        pass
+
+    @abstractmethod
+    def create_pod(self, config: Dict) -> str:
+        """Create pod, return pod_id"""
+        pass
+
+    @abstractmethod
+    def get_pod_status(self, pod_id: str) -> Dict:
+        """Get pod status and connection details"""
+        pass
+
+    @abstractmethod
+    def stop_pod(self, pod_id: str) -> bool:
+        """Stop (pause) pod"""
+        pass
+
+    @abstractmethod
+    def terminate_pod(self, pod_id: str) -> bool:
+        """Terminate (destroy) pod"""
+        pass
+
+    @abstractmethod
+    def get_ssh_connection_string(self, pod_id: str) -> str:
+        """Get SSH connection string for pod"""
+        pass
+```
+
+### V1 GPU Selection: Sane Defaults
+
+**Keep it simple for V1:**
+
+**Default behavior:**
+```bash
+autopod connect
+→ Using default: RTX A40 (1 GPU, Secure Cloud, North America)
+→ Checking availability...
+→ ✓ RTX A40 available, creating pod...
+```
+
+**Fallback logic:**
+```python
+preferred_gpus = ["RTX A40", "RTX A6000", "RTX A5000"]  # Try in order
+
+for gpu_type in preferred_gpus:
+    if provider.get_gpu_availability(gpu_type)['available']:
+        create_pod(gpu_type)
+        break
+```
+
+**Override with flags:**
+```bash
+autopod connect --gpu "RTX 4090" --gpu-count 2
+```
+
+**No complex UI for V1** - just smart defaults that work 95% of the time.
+
+### V2: Expand Selection Options
+
+Later, add:
+- Interactive GPU browser (all options)
+- Filters (region, network, CUDA)
+- Save custom defaults
+
+### Provider-Specific Configuration
+
+```json
+{
+  "providers": {
+    "runpod": {
+      "api_key": "...",
+      "ssh_key_path": "~/.ssh/id_rsa",
+      "default_template": "runpod/comfyui:latest",
+      "default_region": "NA-US",
+      "cloud_type": "secure"
+    }
+  },
+  "defaults": {
+    "gpu_preferences": ["RTX A40", "RTX A6000", "RTX A5000"],
+    "gpu_count": 1
+  }
+}
+```
+
+### Adding a New Provider
+
+To add a new provider (e.g., Vast.ai):
+
+1. Create `src/autopod/providers/vastai.py`
+2. Implement `CloudProvider` interface
+3. Add provider to config
+4. No changes needed to CLI or core logic
+
+---
+
+## Testing Philosophy
+
+### V1 Testing Strategy
+
+**Goals:**
+- Get feedback quickly during development
+- Avoid over-engineering test infrastructure
+- Test real APIs sparingly (costs money)
+- Validate cost-critical operations
+
+**Approach:**
+
+**1. Manual Testing Scripts**
+```python
+# tests/manual/test_pod_creation.py
+"""Manual test for pod creation - Run when ready to test with real API"""
+from autopod.providers.runpod import RunPodProvider
+from rich.console import Console
+
+console = Console()
+
+def test_pod_creation():
+    console.print("[yellow]Testing pod creation...[/yellow]")
+
+    provider = RunPodProvider(api_key="...")
+
+    console.print("Checking A40 availability...")
+    gpu_info = provider.get_gpu_availability("RTX A40")
+    console.print(f"Available: {gpu_info['available']}")
+
+    if input("Create pod? [y/N]: ").lower() == 'y':
+        pod_id = provider.create_pod({"gpu_type": "RTX A40", "gpu_count": 1})
+        console.print(f"[green]✓ Pod created: {pod_id}[/green]")
+```
+
+**2. Rich Console Output for Immediate Feedback**
+
+Every function shows what it's doing:
+```python
+from rich.console import Console
+console = Console()
+
+def check_gpu_availability(gpu_type):
+    console.print(f"[cyan]Checking {gpu_type} availability...[/cyan]")
+
+    result = api.get_gpu(gpu_type)
+
+    if result['available']:
+        console.print(f"[green]✓ {gpu_type} available ({result['count']} units)[/green]")
+    else:
+        console.print(f"[yellow]✗ {gpu_type} not available[/yellow]")
+
+    return result
+```
+
+**3. Dry-Run Mode for Safety**
+```bash
+autopod connect --dry-run  # Shows plan, doesn't create pod
+```
+
+```python
+def create_pod(config, dry_run=False):
+    if dry_run:
+        console.print("[yellow]DRY RUN - Would create:[/yellow]")
+        console.print(f"  GPU: {config['gpu_type']}")
+        console.print(f"  Count: {config['gpu_count']}")
+        console.print(f"  Cost: ${config['cost_per_hour']}/hr")
+        return "dry-run-pod-id"
+
+    # Actually create pod
+    return api.create_pod(config)
+```
+
+**4. Unit Tests for Pure Logic**
+
+Use pytest for non-API code:
+```python
+# tests/test_config.py
+def test_load_config():
+    config = load_config("test_config.json")
+    assert config['defaults']['gpu_preferences'][0] == "RTX A40"
+
+# tests/test_pod_naming.py
+def test_pod_name_generation():
+    name = generate_pod_name()
+    assert name.startswith("autopod-2025-")
+```
+
+**5. Mock APIs for Integration Tests**
+```python
+from unittest.mock import Mock, patch
+
+def test_pod_creation_with_fallback():
+    provider = RunPodProvider(api_key="test")
+
+    # Mock API responses
+    with patch.object(provider, 'get_gpu_availability') as mock_gpu:
+        mock_gpu.side_effect = [
+            {'available': False},  # A40 not available
+            {'available': True}     # A6000 available
+        ]
+
+        result = provider.create_pod_with_fallback()
+        assert result['gpu_type'] == "RTX A6000"
+```
+
+### Feedback During Development
+
+**As features are implemented:**
+
+1. **Verbose output shows everything:**
+```python
+console.print("[dim]DEBUG: API response:[/dim]")
+console.print(response)  # Temporary, remove before commit
+```
+
+2. **Test each function immediately:**
+```bash
+# After implementing get_gpu_availability()
+python -c "from autopod.providers.runpod import RunPodProvider; \
+           p = RunPodProvider('key'); \
+           print(p.get_gpu_availability('RTX A40'))"
+```
+
+3. **User reviews output and gives feedback:**
+   - "Cost calculation is wrong" → AI fixes
+   - "SSH connection fails" → AI debugs with logs
+
+4. **Incremental commits:**
+   - Implement one function → test → commit
+   - Don't wait for whole feature to commit
+
+### Logging for Production
+
+**All operations log to `~/.autopod/logs/autopod.log`:**
+
+```python
+import logging
+from logging.handlers import RotatingFileHandler
+
+logger = logging.getLogger(__name__)
+
+def create_pod(config):
+    logger.info(f"Creating pod: gpu={config['gpu_type']}, count={config['gpu_count']}")
+
+    try:
+        response = api.create_pod(config)
+        logger.info(f"Pod created successfully: {response['pod_id']}")
+        logger.debug(f"Full API response: {response}")
+        return response
+
+    except Exception as e:
+        logger.exception("Pod creation failed", exc_info=True)
+        raise
+```
+
+**Log levels:**
+- `DEBUG`: API requests/responses, internal state
+- `INFO`: User actions, pod lifecycle events
+- `WARNING`: Retries, using fallback GPU
+- `ERROR`: Failures (with full traceback)
+- `CRITICAL`: Unrecoverable errors
+
+**Testing checklist:**
+- [ ] Function has Rich console output showing progress
+- [ ] Function logs at appropriate level
+- [ ] Errors include full traceback in logs
+- [ ] `--dry-run` mode works (if applicable)
+- [ ] Manual test script exists for API interactions
 
 ---
 
