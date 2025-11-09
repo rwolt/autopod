@@ -1,0 +1,537 @@
+"""RunPod provider implementation.
+
+This module implements the CloudProvider interface for RunPod,
+providing pod creation, management, and monitoring capabilities.
+"""
+
+import os
+import time
+from typing import Dict, Optional, List
+from datetime import datetime
+
+import runpod
+from autopod.providers.base import CloudProvider
+from autopod.logging import get_logger
+
+logger = get_logger(__name__)
+
+
+class RunPodProvider(CloudProvider):
+    """RunPod cloud provider implementation."""
+
+    # GPU type mapping (RunPod internal names → display names)
+    GPU_TYPE_MAP = {
+        "NVIDIA RTX A40": "RTX A40",
+        "NVIDIA RTX A6000": "RTX A6000",
+        "NVIDIA RTX A5000": "RTX A5000",
+        "NVIDIA RTX 4090": "RTX 4090",
+        "NVIDIA RTX 3090": "RTX 3090",
+        "NVIDIA A100 80GB": "A100 80GB",
+        "NVIDIA A100 40GB": "A100 40GB",
+    }
+
+    # Reverse mapping for lookups
+    DISPLAY_NAME_TO_GPU_ID = {v: k for k, v in GPU_TYPE_MAP.items()}
+
+    def __init__(self, api_key: str):
+        """Initialize RunPod provider.
+
+        Args:
+            api_key: RunPod API key
+
+        Raises:
+            ValueError: If API key is empty
+        """
+        if not api_key:
+            raise ValueError("RunPod API key cannot be empty")
+
+        self.api_key = api_key
+        runpod.api_key = api_key
+
+        logger.info("RunPod provider initialized")
+
+    def authenticate(self, api_key: str) -> bool:
+        """Validate API credentials with RunPod.
+
+        Args:
+            api_key: API key to validate
+
+        Returns:
+            True if valid, False otherwise
+
+        Example:
+            provider = RunPodProvider(api_key="test")
+            if provider.authenticate(api_key):
+                print("Valid credentials")
+        """
+        try:
+            # Set API key
+            runpod.api_key = api_key
+            self.api_key = api_key
+
+            # Try to fetch GPU list as authentication test
+            gpus = runpod.get_gpus()
+
+            if gpus is not None:
+                logger.info("Authentication successful")
+                return True
+            else:
+                logger.warning("Authentication failed - invalid API key")
+                return False
+
+        except Exception as e:
+            logger.error(f"Authentication error: {e}", exc_info=True)
+            return False
+
+    def get_gpu_availability(self, gpu_type: str) -> Dict:
+        """Check if a specific GPU type is available.
+
+        Args:
+            gpu_type: GPU display name (e.g., "RTX A40", "RTX A6000")
+
+        Returns:
+            Dictionary with availability information:
+            {
+                "available": True/False,
+                "count": int,  # Number of available GPUs
+                "cost_per_hour": float,  # Cost per GPU per hour
+                "regions": List[str],  # Available regions
+                "gpu_type_id": str,  # RunPod internal GPU type ID
+            }
+
+        Example:
+            info = provider.get_gpu_availability("RTX A40")
+            if info["available"]:
+                print(f"RTX A40 available: {info['count']} units at ${info['cost_per_hour']}/hr")
+        """
+        try:
+            logger.debug(f"Checking availability for GPU: {gpu_type}")
+
+            # Get all available GPUs
+            gpus = runpod.get_gpus()
+
+            if not gpus:
+                logger.warning("No GPUs returned from RunPod API")
+                return {
+                    "available": False,
+                    "count": 0,
+                    "cost_per_hour": 0.0,
+                    "regions": [],
+                    "gpu_type_id": None,
+                }
+
+            # Find matching GPU type
+            # Try exact match first, then fuzzy match
+            matching_gpu = None
+
+            for gpu in gpus:
+                gpu_name = gpu.get("displayName", "")
+
+                # Exact match on display name
+                if gpu_type.lower() in gpu_name.lower():
+                    matching_gpu = gpu
+                    break
+
+            if not matching_gpu:
+                logger.info(f"GPU type '{gpu_type}' not found or not available")
+                return {
+                    "available": False,
+                    "count": 0,
+                    "cost_per_hour": 0.0,
+                    "regions": [],
+                    "gpu_type_id": None,
+                }
+
+            # Extract pricing information
+            # RunPod pricing structure: gpu["lowestPrice"]["minimumBidPrice"]
+            cost_per_hour = 0.0
+            if "lowestPrice" in matching_gpu and matching_gpu["lowestPrice"]:
+                cost_per_hour = float(matching_gpu["lowestPrice"].get("minimumBidPrice", 0.0))
+
+            # Count available GPUs (this is a rough estimate)
+            # RunPod doesn't provide exact availability counts in the public API
+            # We'll assume if it's listed, it's available
+            count = 1
+
+            result = {
+                "available": True,
+                "count": count,
+                "cost_per_hour": cost_per_hour,
+                "regions": ["NA-US", "EU-RO"],  # RunPod default regions
+                "gpu_type_id": matching_gpu.get("id"),
+                "display_name": matching_gpu.get("displayName"),
+                "memory_gb": matching_gpu.get("memoryInGb", 0),
+            }
+
+            logger.info(f"GPU '{gpu_type}' available: ${cost_per_hour}/hr, {result['memory_gb']}GB VRAM")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error checking GPU availability: {e}", exc_info=True)
+            return {
+                "available": False,
+                "count": 0,
+                "cost_per_hour": 0.0,
+                "regions": [],
+                "gpu_type_id": None,
+            }
+
+    def create_pod(self, config: Dict) -> str:
+        """Create a new pod with specified configuration.
+
+        Args:
+            config: Pod configuration dictionary with keys:
+                - gpu_type (str): GPU display name (e.g., "RTX A40")
+                - gpu_count (int): Number of GPUs (default: 1)
+                - template (str): Docker template name (default: from config)
+                - region (str): Preferred region (default: "NA-US")
+                - volume_id (str, optional): Network volume ID
+                - cloud_type (str): "secure" or "community" (default: "secure")
+                - disk_size_gb (int): Container disk size (default: 50)
+                - env_vars (Dict, optional): Environment variables
+
+        Returns:
+            Pod ID as string
+
+        Raises:
+            RuntimeError: If pod creation fails
+
+        Example:
+            pod_id = provider.create_pod({
+                "gpu_type": "RTX A40",
+                "gpu_count": 1,
+                "template": "runpod/comfyui:latest"
+            })
+        """
+        try:
+            gpu_type = config.get("gpu_type")
+            gpu_count = config.get("gpu_count", 1)
+            template = config.get("template", "runpod/pytorch:latest")
+            cloud_type = config.get("cloud_type", "SECURE")  # SECURE or ALL
+
+            logger.info(f"Creating pod: gpu={gpu_type}, count={gpu_count}, template={template}")
+
+            # Get GPU type ID
+            gpu_info = self.get_gpu_availability(gpu_type)
+            if not gpu_info["available"]:
+                raise RuntimeError(f"GPU type '{gpu_type}' not available")
+
+            gpu_type_id = gpu_info["gpu_type_id"]
+
+            # Build pod creation parameters
+            pod_params = {
+                "name": self._generate_pod_name(),
+                "image_name": template,
+                "gpu_type_id": gpu_type_id,
+                "gpu_count": gpu_count,
+                "cloud_type": cloud_type,
+                "container_disk_in_gb": config.get("disk_size_gb", 50),
+            }
+
+            # Add optional parameters
+            if "volume_id" in config:
+                pod_params["volume_in_gb"] = config["volume_id"]
+
+            if "env_vars" in config:
+                pod_params["env"] = config["env_vars"]
+
+            logger.debug(f"Pod creation params: {pod_params}")
+
+            # Create pod using RunPod SDK
+            pod = runpod.create_pod(**pod_params)
+
+            if not pod or "id" not in pod:
+                raise RuntimeError(f"Pod creation failed: {pod}")
+
+            pod_id = pod["id"]
+            logger.info(f"Pod created successfully: {pod_id}")
+
+            return pod_id
+
+        except Exception as e:
+            logger.error(f"Error creating pod: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to create pod: {e}") from e
+
+    def get_pod_status(self, pod_id: str) -> Dict:
+        """Get detailed status and metrics for a pod.
+
+        Args:
+            pod_id: Pod identifier
+
+        Returns:
+            Dictionary with pod status:
+            {
+                "pod_id": str,
+                "status": str,  # "RUNNING", "STOPPED", "TERMINATED"
+                "gpu_type": str,
+                "gpu_count": int,
+                "cost_per_hour": float,
+                "runtime_minutes": float,
+                "total_cost": float,
+                "ssh_host": str,
+                "ssh_port": int,
+            }
+        """
+        try:
+            logger.debug(f"Getting status for pod: {pod_id}")
+
+            # Get pod details from RunPod
+            pod = runpod.get_pod(pod_id)
+
+            if not pod:
+                raise RuntimeError(f"Pod {pod_id} not found")
+
+            # Extract status information
+            status = pod.get("desiredStatus", "UNKNOWN")
+            gpu_count = pod.get("gpuCount", 0)
+            cost_per_hour = pod.get("costPerHr", 0.0)
+
+            # Calculate runtime and cost
+            runtime_minutes = 0.0
+            total_cost = 0.0
+
+            if "uptimeInSeconds" in pod:
+                runtime_minutes = pod["uptimeInSeconds"] / 60.0
+                total_cost = (runtime_minutes / 60.0) * cost_per_hour
+
+            # Get SSH connection details
+            ssh_host = ""
+            ssh_port = 0
+
+            if "runtime" in pod and pod["runtime"]:
+                runtime_data = pod["runtime"]
+                if "ports" in runtime_data:
+                    # SSH is typically on port 22 internally
+                    for port_mapping in runtime_data.get("ports", []):
+                        if port_mapping.get("privatePort") == 22:
+                            ssh_port = port_mapping.get("publicPort", 0)
+                            break
+
+                ssh_host = runtime_data.get("host", "")
+
+            # Get GPU type display name
+            gpu_type = "Unknown"
+            if "gpuTypeId" in pod:
+                # Try to map back to display name
+                for display_name, gpu_id in self.DISPLAY_NAME_TO_GPU_ID.items():
+                    if gpu_id == pod["gpuTypeId"]:
+                        gpu_type = display_name
+                        break
+
+            result = {
+                "pod_id": pod_id,
+                "status": status,
+                "gpu_type": gpu_type,
+                "gpu_count": gpu_count,
+                "cost_per_hour": cost_per_hour,
+                "runtime_minutes": runtime_minutes,
+                "total_cost": total_cost,
+                "ssh_host": ssh_host,
+                "ssh_port": ssh_port,
+            }
+
+            logger.info(f"Pod {pod_id} status: {status}, runtime: {runtime_minutes:.1f}min, cost: ${total_cost:.4f}")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error getting pod status: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to get pod status: {e}") from e
+
+    def stop_pod(self, pod_id: str) -> bool:
+        """Stop (pause) a running pod.
+
+        Args:
+            pod_id: Pod identifier
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            logger.info(f"Stopping pod: {pod_id}")
+
+            result = runpod.stop_pod(pod_id)
+
+            if result:
+                logger.info(f"Pod {pod_id} stopped successfully")
+                return True
+            else:
+                logger.warning(f"Failed to stop pod {pod_id}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error stopping pod: {e}", exc_info=True)
+            return False
+
+    def terminate_pod(self, pod_id: str) -> bool:
+        """Terminate (destroy) a pod permanently.
+
+        Args:
+            pod_id: Pod identifier
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            logger.info(f"Terminating pod: {pod_id}")
+
+            result = runpod.terminate_pod(pod_id)
+
+            if result:
+                logger.info(f"Pod {pod_id} terminated successfully")
+                return True
+            else:
+                logger.warning(f"Failed to terminate pod {pod_id}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error terminating pod: {e}", exc_info=True)
+            return False
+
+    def get_ssh_connection_string(self, pod_id: str) -> str:
+        """Get SSH connection string for a pod.
+
+        Args:
+            pod_id: Pod identifier
+
+        Returns:
+            SSH connection string in format "user@host:port"
+
+        Example:
+            conn_str = provider.get_ssh_connection_string("pod-abc123")
+            # Returns: "root@ssh.runpod.io:12345"
+        """
+        try:
+            logger.debug(f"Getting SSH connection for pod: {pod_id}")
+
+            # Get pod status which includes SSH details
+            status = self.get_pod_status(pod_id)
+
+            ssh_host = status["ssh_host"]
+            ssh_port = status["ssh_port"]
+
+            if not ssh_host or not ssh_port:
+                raise RuntimeError(f"SSH connection not available for pod {pod_id}")
+
+            # RunPod pods typically use root user
+            conn_string = f"root@{ssh_host}:{ssh_port}"
+
+            logger.info(f"SSH connection string for pod {pod_id}: {conn_string}")
+
+            return conn_string
+
+        except Exception as e:
+            logger.error(f"Error getting SSH connection string: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to get SSH connection string: {e}") from e
+
+    def _generate_pod_name(self) -> str:
+        """Generate a unique pod name with format: autopod-YYYY-MM-DD-NNN
+
+        Returns:
+            Generated pod name
+
+        Example:
+            "autopod-2025-11-08-001"
+            "autopod-2025-11-08-042"
+        """
+        # Get current date
+        now = datetime.now()
+        date_str = now.strftime("%Y-%m-%d")
+
+        # Get list of existing pods to find next number
+        try:
+            pods = runpod.get_pods()
+
+            # Filter pods created today with autopod prefix
+            today_prefix = f"autopod-{date_str}-"
+            today_pods = [p for p in pods if p.get("name", "").startswith(today_prefix)]
+
+            # Extract numbers and find max
+            max_num = 0
+            for pod in today_pods:
+                name = pod.get("name", "")
+                # Extract number from end of name
+                try:
+                    num_str = name.split("-")[-1]
+                    num = int(num_str)
+                    max_num = max(max_num, num)
+                except (ValueError, IndexError):
+                    continue
+
+            # Next number is max + 1
+            next_num = max_num + 1
+
+        except Exception as e:
+            # If we can't get pods list, just use timestamp
+            logger.warning(f"Could not get pods list for naming: {e}")
+            next_num = int(now.strftime("%H%M%S")) % 1000  # Use time as number
+
+        # Format: autopod-YYYY-MM-DD-NNN
+        pod_name = f"autopod-{date_str}-{next_num:03d}"
+
+        logger.debug(f"Generated pod name: {pod_name}")
+
+        return pod_name
+
+    def _retry_with_backoff(
+        self,
+        func,
+        max_retries: int = 3,
+        initial_delay: float = 1.0,
+        backoff_factor: float = 2.0,
+        *args,
+        **kwargs
+    ):
+        """Retry a function with exponential backoff.
+
+        Args:
+            func: Function to retry
+            max_retries: Maximum number of retry attempts (default: 3)
+            initial_delay: Initial delay in seconds (default: 1.0)
+            backoff_factor: Multiplier for each retry (default: 2.0)
+            *args: Arguments to pass to function
+            **kwargs: Keyword arguments to pass to function
+
+        Returns:
+            Result of successful function call
+
+        Raises:
+            Exception: Last exception if all retries fail
+
+        Example:
+            result = self._retry_with_backoff(
+                runpod.get_pod,
+                max_retries=3,
+                pod_id="abc123"
+            )
+        """
+        delay = initial_delay
+        last_exception = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                return func(*args, **kwargs)
+
+            except Exception as e:
+                last_exception = e
+
+                if attempt == max_retries:
+                    # Final attempt failed
+                    logger.error(f"All {max_retries} retry attempts failed: {e}")
+                    raise
+
+                # Log retry attempt
+                logger.warning(
+                    f"Attempt {attempt + 1}/{max_retries} failed: {e}. "
+                    f"Retrying in {delay:.1f}s..."
+                )
+
+                # Wait before retrying
+                time.sleep(delay)
+
+                # Increase delay for next attempt
+                delay *= backoff_factor
+
+        # Should never reach here, but just in case
+        raise last_exception if last_exception else RuntimeError("Retry failed")

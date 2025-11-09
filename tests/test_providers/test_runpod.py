@@ -1,0 +1,375 @@
+"""Tests for RunPod provider implementation."""
+
+import pytest
+from unittest.mock import Mock, patch, MagicMock
+from datetime import datetime
+from autopod.providers.runpod import RunPodProvider
+
+
+@pytest.fixture
+def mock_runpod():
+    """Mock the runpod module."""
+    with patch('autopod.providers.runpod.runpod') as mock:
+        yield mock
+
+
+@pytest.fixture
+def provider():
+    """Create a RunPodProvider instance with test API key."""
+    with patch('autopod.providers.runpod.runpod'):
+        return RunPodProvider(api_key="test-api-key-123")
+
+
+def test_init_with_valid_api_key():
+    """Test initialization with valid API key."""
+    with patch('autopod.providers.runpod.runpod') as mock_runpod:
+        provider = RunPodProvider(api_key="test-key")
+        assert provider.api_key == "test-key"
+        assert mock_runpod.api_key == "test-key"
+
+
+def test_init_with_empty_api_key():
+    """Test initialization with empty API key raises ValueError."""
+    with pytest.raises(ValueError, match="API key cannot be empty"):
+        RunPodProvider(api_key="")
+
+
+def test_authenticate_success(provider, mock_runpod):
+    """Test successful authentication."""
+    mock_runpod.get_gpus.return_value = [{"id": "gpu1"}]
+
+    result = provider.authenticate("test-key")
+
+    assert result is True
+    assert provider.api_key == "test-key"
+    mock_runpod.get_gpus.assert_called_once()
+
+
+def test_authenticate_failure(provider, mock_runpod):
+    """Test failed authentication."""
+    mock_runpod.get_gpus.return_value = None
+
+    result = provider.authenticate("invalid-key")
+
+    assert result is False
+
+
+def test_authenticate_exception(provider, mock_runpod):
+    """Test authentication with exception."""
+    mock_runpod.get_gpus.side_effect = Exception("Network error")
+
+    result = provider.authenticate("test-key")
+
+    assert result is False
+
+
+def test_get_gpu_availability_found(provider, mock_runpod):
+    """Test GPU availability check for available GPU."""
+    mock_runpod.get_gpus.return_value = [
+        {
+            "id": "NVIDIA_RTX_A40",
+            "displayName": "NVIDIA RTX A40",
+            "memoryInGb": 48,
+            "lowestPrice": {"minimumBidPrice": 0.40}
+        }
+    ]
+
+    result = provider.get_gpu_availability("RTX A40")
+
+    assert result["available"] is True
+    assert result["cost_per_hour"] == 0.40
+    assert result["memory_gb"] == 48
+    assert result["gpu_type_id"] == "NVIDIA_RTX_A40"
+
+
+def test_get_gpu_availability_not_found(provider, mock_runpod):
+    """Test GPU availability check for unavailable GPU."""
+    mock_runpod.get_gpus.return_value = [
+        {
+            "id": "OTHER_GPU",
+            "displayName": "Other GPU"
+        }
+    ]
+
+    result = provider.get_gpu_availability("RTX A40")
+
+    assert result["available"] is False
+    assert result["count"] == 0
+
+
+def test_get_gpu_availability_no_gpus(provider, mock_runpod):
+    """Test GPU availability check when no GPUs returned."""
+    mock_runpod.get_gpus.return_value = []
+
+    result = provider.get_gpu_availability("RTX A40")
+
+    assert result["available"] is False
+
+
+def test_get_gpu_availability_exception(provider, mock_runpod):
+    """Test GPU availability check with exception."""
+    mock_runpod.get_gpus.side_effect = Exception("API error")
+
+    result = provider.get_gpu_availability("RTX A40")
+
+    assert result["available"] is False
+
+
+def test_create_pod_success(provider, mock_runpod):
+    """Test successful pod creation."""
+    # Mock GPU availability
+    with patch.object(provider, 'get_gpu_availability') as mock_avail:
+        mock_avail.return_value = {
+            "available": True,
+            "gpu_type_id": "NVIDIA_RTX_A40"
+        }
+
+        # Mock pod creation
+        mock_runpod.create_pod.return_value = {"id": "pod-abc123"}
+
+        # Mock pod name generation
+        with patch.object(provider, '_generate_pod_name') as mock_name:
+            mock_name.return_value = "autopod-2025-11-08-001"
+
+            config = {
+                "gpu_type": "RTX A40",
+                "gpu_count": 1,
+                "template": "runpod/comfyui:latest"
+            }
+
+            pod_id = provider.create_pod(config)
+
+            assert pod_id == "pod-abc123"
+            mock_runpod.create_pod.assert_called_once()
+
+
+def test_create_pod_gpu_not_available(provider, mock_runpod):
+    """Test pod creation when GPU is not available."""
+    with patch.object(provider, 'get_gpu_availability') as mock_avail:
+        mock_avail.return_value = {"available": False}
+
+        config = {"gpu_type": "RTX A40"}
+
+        with pytest.raises(RuntimeError, match="not available"):
+            provider.create_pod(config)
+
+
+def test_create_pod_creation_fails(provider, mock_runpod):
+    """Test pod creation when RunPod API fails."""
+    with patch.object(provider, 'get_gpu_availability') as mock_avail:
+        mock_avail.return_value = {
+            "available": True,
+            "gpu_type_id": "NVIDIA_RTX_A40"
+        }
+
+        # Mock failed pod creation
+        mock_runpod.create_pod.return_value = None
+
+        with patch.object(provider, '_generate_pod_name'):
+            config = {"gpu_type": "RTX A40"}
+
+            with pytest.raises(RuntimeError, match="Pod creation failed"):
+                provider.create_pod(config)
+
+
+def test_get_pod_status_success(provider, mock_runpod):
+    """Test successful pod status retrieval."""
+    mock_runpod.get_pod.return_value = {
+        "id": "pod-abc123",
+        "desiredStatus": "RUNNING",
+        "gpuCount": 1,
+        "costPerHr": 0.40,
+        "uptimeInSeconds": 600,  # 10 minutes
+        "gpuTypeId": "NVIDIA RTX A40",
+        "runtime": {
+            "host": "ssh.runpod.io",
+            "ports": [
+                {"privatePort": 22, "publicPort": 12345}
+            ]
+        }
+    }
+
+    status = provider.get_pod_status("pod-abc123")
+
+    assert status["pod_id"] == "pod-abc123"
+    assert status["status"] == "RUNNING"
+    assert status["gpu_count"] == 1
+    assert status["cost_per_hour"] == 0.40
+    assert status["runtime_minutes"] == 10.0
+    assert abs(status["total_cost"] - 0.0667) < 0.001  # 10min * $0.40/hr
+    assert status["ssh_host"] == "ssh.runpod.io"
+    assert status["ssh_port"] == 12345
+
+
+def test_get_pod_status_not_found(provider, mock_runpod):
+    """Test pod status when pod not found."""
+    mock_runpod.get_pod.return_value = None
+
+    with pytest.raises(RuntimeError, match="not found"):
+        provider.get_pod_status("pod-nonexistent")
+
+
+def test_stop_pod_success(provider, mock_runpod):
+    """Test successful pod stop."""
+    mock_runpod.stop_pod.return_value = True
+
+    result = provider.stop_pod("pod-abc123")
+
+    assert result is True
+    mock_runpod.stop_pod.assert_called_once_with("pod-abc123")
+
+
+def test_stop_pod_failure(provider, mock_runpod):
+    """Test pod stop failure."""
+    mock_runpod.stop_pod.return_value = False
+
+    result = provider.stop_pod("pod-abc123")
+
+    assert result is False
+
+
+def test_stop_pod_exception(provider, mock_runpod):
+    """Test pod stop with exception."""
+    mock_runpod.stop_pod.side_effect = Exception("API error")
+
+    result = provider.stop_pod("pod-abc123")
+
+    assert result is False
+
+
+def test_terminate_pod_success(provider, mock_runpod):
+    """Test successful pod termination."""
+    mock_runpod.terminate_pod.return_value = True
+
+    result = provider.terminate_pod("pod-abc123")
+
+    assert result is True
+    mock_runpod.terminate_pod.assert_called_once_with("pod-abc123")
+
+
+def test_terminate_pod_failure(provider, mock_runpod):
+    """Test pod termination failure."""
+    mock_runpod.terminate_pod.return_value = False
+
+    result = provider.terminate_pod("pod-abc123")
+
+    assert result is False
+
+
+def test_terminate_pod_exception(provider, mock_runpod):
+    """Test pod termination with exception."""
+    mock_runpod.terminate_pod.side_effect = Exception("API error")
+
+    result = provider.terminate_pod("pod-abc123")
+
+    assert result is False
+
+
+def test_get_ssh_connection_string_success(provider, mock_runpod):
+    """Test successful SSH connection string retrieval."""
+    with patch.object(provider, 'get_pod_status') as mock_status:
+        mock_status.return_value = {
+            "ssh_host": "ssh.runpod.io",
+            "ssh_port": 12345
+        }
+
+        conn_str = provider.get_ssh_connection_string("pod-abc123")
+
+        assert conn_str == "root@ssh.runpod.io:12345"
+
+
+def test_get_ssh_connection_string_no_ssh(provider, mock_runpod):
+    """Test SSH connection string when SSH not available."""
+    with patch.object(provider, 'get_pod_status') as mock_status:
+        mock_status.return_value = {
+            "ssh_host": "",
+            "ssh_port": 0
+        }
+
+        with pytest.raises(RuntimeError, match="SSH connection not available"):
+            provider.get_ssh_connection_string("pod-abc123")
+
+
+def test_generate_pod_name_format(provider, mock_runpod):
+    """Test pod name generation format."""
+    mock_runpod.get_pods.return_value = []
+
+    name = provider._generate_pod_name()
+
+    # Check format: autopod-YYYY-MM-DD-NNN
+    parts = name.split("-")
+    assert len(parts) == 5
+    assert parts[0] == "autopod"
+    assert len(parts[1]) == 4  # Year
+    assert len(parts[2]) == 2  # Month
+    assert len(parts[3]) == 2  # Day
+    assert len(parts[4]) == 3  # Number
+
+
+def test_generate_pod_name_increments(provider, mock_runpod):
+    """Test pod name generation increments correctly."""
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    mock_runpod.get_pods.return_value = [
+        {"name": f"autopod-{today}-001"},
+        {"name": f"autopod-{today}-002"},
+        {"name": f"autopod-{today}-005"},  # Gap in sequence
+    ]
+
+    name = provider._generate_pod_name()
+
+    # Should be 006 (max + 1)
+    assert name.endswith("-006")
+
+
+def test_generate_pod_name_no_existing_pods(provider, mock_runpod):
+    """Test pod name generation with no existing pods."""
+    mock_runpod.get_pods.return_value = []
+
+    name = provider._generate_pod_name()
+
+    # Should be 001
+    assert name.endswith("-001")
+
+
+def test_retry_with_backoff_success_first_try(provider):
+    """Test retry succeeds on first attempt."""
+    mock_func = Mock(return_value="success")
+
+    result = provider._retry_with_backoff(mock_func, arg1="test")
+
+    assert result == "success"
+    assert mock_func.call_count == 1
+
+
+def test_retry_with_backoff_success_after_retries(provider):
+    """Test retry succeeds after some failures."""
+    mock_func = Mock(side_effect=[
+        Exception("Fail 1"),
+        Exception("Fail 2"),
+        "success"
+    ])
+
+    result = provider._retry_with_backoff(
+        mock_func,
+        max_retries=3,
+        initial_delay=0.01  # Small delay for testing
+    )
+
+    assert result == "success"
+    assert mock_func.call_count == 3
+
+
+def test_retry_with_backoff_all_fail(provider):
+    """Test retry exhausts all attempts."""
+    mock_func = Mock(side_effect=Exception("Always fails"))
+
+    with pytest.raises(Exception, match="Always fails"):
+        provider._retry_with_backoff(
+            mock_func,
+            max_retries=2,
+            initial_delay=0.01
+        )
+
+    # Should try: initial + 2 retries = 3 times
+    assert mock_func.call_count == 3
