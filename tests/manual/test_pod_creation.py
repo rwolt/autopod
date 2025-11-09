@@ -60,25 +60,31 @@ def run_gpu_availability_test(provider: RunPodProvider):
     gpu_types = ["RTX A40", "RTX A6000", "RTX A5000", "RTX 4090"]
 
     # Create table for results
-    table = Table(title="GPU Availability")
-    table.add_column("GPU Type", style="cyan")
-    table.add_column("Available", style="green")
-    table.add_column("Cost/hr", justify="right", style="yellow")
+    table = Table(title="GPU Availability & Pricing")
+    table.add_column("GPU", style="cyan", no_wrap=True)
     table.add_column("VRAM", justify="right", style="blue")
+    table.add_column("Secure", justify="right", style="green")
+    table.add_column("Community", justify="right", style="yellow")
+    table.add_column("Spot", justify="right", style="magenta")
+    table.add_column("Max GPUs", justify="center", style="dim")
 
     for gpu_type in gpu_types:
         info = provider.get_gpu_availability(gpu_type)
 
         if info["available"]:
-            available = "✓ Yes"
-            cost = f"${info['cost_per_hour']:.2f}"
-            vram = f"{info.get('memory_gb', 0)} GB"
+            vram = f"{info['memory_gb']} GB"
+            secure = f"${info['secure_price']:.2f}/hr" if info['secure_cloud'] else "N/A"
+            community = f"${info['community_price']:.2f}/hr" if info['community_cloud'] else "N/A"
+            spot = f"${info['spot_price']:.2f}/hr" if info['spot_price'] > 0 else "N/A"
+            max_gpus = str(info['max_gpu_count'])
         else:
-            available = "✗ No"
-            cost = "-"
             vram = "-"
+            secure = "-"
+            community = "-"
+            spot = "-"
+            max_gpus = "-"
 
-        table.add_row(gpu_type, available, cost, vram)
+        table.add_row(gpu_type, vram, secure, community, spot, max_gpus)
 
     console.print(table)
 

@@ -65,21 +65,41 @@ def test_authenticate_exception(provider, mock_runpod):
 
 def test_get_gpu_availability_found(provider, mock_runpod):
     """Test GPU availability check for available GPU."""
+    # Mock get_gpus (for finding GPU ID)
     mock_runpod.get_gpus.return_value = [
         {
-            "id": "NVIDIA_RTX_A40",
-            "displayName": "NVIDIA RTX A40",
-            "memoryInGb": 48,
-            "lowestPrice": {"minimumBidPrice": 0.40}
+            "id": "NVIDIA A40",
+            "displayName": "A40",
+            "memoryInGb": 48
         }
     ]
+
+    # Mock get_gpu (for detailed pricing)
+    mock_runpod.get_gpu.return_value = {
+        "id": "NVIDIA A40",
+        "displayName": "A40",
+        "memoryInGb": 48,
+        "maxGpuCount": 10,
+        "securePrice": 0.40,
+        "communityPrice": 0.35,
+        "secureSpotPrice": 0.20,
+        "communitySpotPrice": 0.24,
+        "secureCloud": True,
+        "communityCloud": False
+    }
 
     result = provider.get_gpu_availability("RTX A40")
 
     assert result["available"] is True
-    assert result["cost_per_hour"] == 0.40
+    assert result["cost_per_hour"] == 0.20  # Lowest price (spot)
+    assert result["secure_price"] == 0.40
+    assert result["community_price"] == 0.35
+    assert result["spot_price"] == 0.20
     assert result["memory_gb"] == 48
-    assert result["gpu_type_id"] == "NVIDIA_RTX_A40"
+    assert result["gpu_type_id"] == "NVIDIA A40"
+    assert result["max_gpu_count"] == 10
+    assert result["secure_cloud"] is True
+    assert result["community_cloud"] is False
 
 
 def test_get_gpu_availability_not_found(provider, mock_runpod):
@@ -94,7 +114,8 @@ def test_get_gpu_availability_not_found(provider, mock_runpod):
     result = provider.get_gpu_availability("RTX A40")
 
     assert result["available"] is False
-    assert result["count"] == 0
+    assert result["max_gpu_count"] == 0
+    assert result["cost_per_hour"] == 0.0
 
 
 def test_get_gpu_availability_no_gpus(provider, mock_runpod):
@@ -104,6 +125,7 @@ def test_get_gpu_availability_no_gpus(provider, mock_runpod):
     result = provider.get_gpu_availability("RTX A40")
 
     assert result["available"] is False
+    assert result["cost_per_hour"] == 0.0
 
 
 def test_get_gpu_availability_exception(provider, mock_runpod):
@@ -113,6 +135,7 @@ def test_get_gpu_availability_exception(provider, mock_runpod):
     result = provider.get_gpu_availability("RTX A40")
 
     assert result["available"] is False
+    assert result["cost_per_hour"] == 0.0
 
 
 def test_create_pod_success(provider, mock_runpod):

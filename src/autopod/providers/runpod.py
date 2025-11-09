@@ -83,98 +83,144 @@ class RunPodProvider(CloudProvider):
             logger.error(f"Authentication error: {e}", exc_info=True)
             return False
 
-    def get_gpu_availability(self, gpu_type: str) -> Dict:
+    def get_gpu_availability(self, gpu_type: str, gpu_count: int = 1) -> Dict:
         """Check if a specific GPU type is available.
 
         Args:
-            gpu_type: GPU display name (e.g., "RTX A40", "RTX A6000")
+            gpu_type: GPU display name (e.g., "RTX A40", "RTX A6000") or GPU ID (e.g., "NVIDIA A40")
+            gpu_count: Number of GPUs to check availability for (default: 1)
 
         Returns:
             Dictionary with availability information:
             {
                 "available": True/False,
-                "count": int,  # Number of available GPUs
-                "cost_per_hour": float,  # Cost per GPU per hour
-                "regions": List[str],  # Available regions
                 "gpu_type_id": str,  # RunPod internal GPU type ID
+                "display_name": str,  # Display name
+                "memory_gb": int,  # VRAM in GB
+                "max_gpu_count": int,  # Maximum GPUs you can request
+                "cost_per_hour": float,  # Lowest cost per GPU per hour
+                "secure_price": float,  # Secure cloud on-demand price
+                "community_price": float,  # Community cloud on-demand price
+                "spot_price": float,  # Lowest spot price
+                "secure_cloud": bool,  # Available in secure cloud
+                "community_cloud": bool,  # Available in community cloud
             }
 
         Example:
             info = provider.get_gpu_availability("RTX A40")
             if info["available"]:
-                print(f"RTX A40 available: {info['count']} units at ${info['cost_per_hour']}/hr")
+                print(f"RTX A40 available: ${info['cost_per_hour']}/hr")
+                print(f"  Secure: ${info['secure_price']}/hr")
+                print(f"  Spot: ${info['spot_price']}/hr")
         """
         try:
-            logger.debug(f"Checking availability for GPU: {gpu_type}")
+            logger.debug(f"Checking availability for GPU: {gpu_type} (count: {gpu_count})")
 
-            # Get all available GPUs
+            # First get basic GPU list to find the correct GPU ID
             gpus = runpod.get_gpus()
+            gpu_id = None
 
-            if not gpus:
-                logger.warning("No GPUs returned from RunPod API")
-                return {
-                    "available": False,
-                    "count": 0,
-                    "cost_per_hour": 0.0,
-                    "regions": [],
-                    "gpu_type_id": None,
-                }
-
-            # Find matching GPU type
-            # Try exact match first, then fuzzy match
-            matching_gpu = None
-
+            # Try to find matching GPU by display name or ID
             for gpu in gpus:
-                gpu_name = gpu.get("displayName", "")
+                gpu_display = gpu.get("displayName", "")
+                gpu_full_id = gpu.get("id", "")
 
-                # Exact match on display name
-                if gpu_type.lower() in gpu_name.lower():
-                    matching_gpu = gpu
+                # Match by display name or full ID
+                if (gpu_type.lower() in gpu_display.lower() or
+                    gpu_type.lower() in gpu_full_id.lower() or
+                    gpu_display.lower() in gpu_type.lower()):
+                    gpu_id = gpu_full_id
                     break
 
-            if not matching_gpu:
-                logger.info(f"GPU type '{gpu_type}' not found or not available")
+            if not gpu_id:
+                logger.info(f"GPU type '{gpu_type}' not found in catalog")
                 return {
                     "available": False,
-                    "count": 0,
-                    "cost_per_hour": 0.0,
-                    "regions": [],
                     "gpu_type_id": None,
+                    "display_name": gpu_type,
+                    "memory_gb": 0,
+                    "max_gpu_count": 0,
+                    "cost_per_hour": 0.0,
+                    "secure_price": 0.0,
+                    "community_price": 0.0,
+                    "spot_price": 0.0,
+                    "secure_cloud": False,
+                    "community_cloud": False,
                 }
 
-            # Extract pricing information
-            # RunPod pricing structure: gpu["lowestPrice"]["minimumBidPrice"]
-            cost_per_hour = 0.0
-            if "lowestPrice" in matching_gpu and matching_gpu["lowestPrice"]:
-                cost_per_hour = float(matching_gpu["lowestPrice"].get("minimumBidPrice", 0.0))
+            # Get detailed GPU information with pricing
+            gpu_details = runpod.get_gpu(gpu_id, gpu_quantity=gpu_count)
 
-            # Count available GPUs (this is a rough estimate)
-            # RunPod doesn't provide exact availability counts in the public API
-            # We'll assume if it's listed, it's available
-            count = 1
+            # Extract all pricing information
+            secure_price = gpu_details.get("securePrice", 0.0) or 0.0
+            community_price = gpu_details.get("communityPrice", 0.0) or 0.0
+            secure_spot = gpu_details.get("secureSpotPrice", 0.0) or 0.0
+            community_spot = gpu_details.get("communitySpotPrice", 0.0) or 0.0
+
+            # Determine lowest available price
+            available_prices = [p for p in [secure_price, community_price, secure_spot, community_spot] if p > 0]
+            cost_per_hour = min(available_prices) if available_prices else 0.0
+
+            # Lowest spot price
+            spot_prices = [p for p in [secure_spot, community_spot] if p > 0]
+            spot_price = min(spot_prices) if spot_prices else 0.0
+
+            # Cloud availability
+            secure_cloud = gpu_details.get("secureCloud", False)
+            community_cloud = gpu_details.get("communityCloud", False)
 
             result = {
-                "available": True,
-                "count": count,
+                "available": secure_cloud or community_cloud,
+                "gpu_type_id": gpu_details.get("id"),
+                "display_name": gpu_details.get("displayName"),
+                "memory_gb": gpu_details.get("memoryInGb", 0),
+                "max_gpu_count": gpu_details.get("maxGpuCount", 1),
                 "cost_per_hour": cost_per_hour,
-                "regions": ["NA-US", "EU-RO"],  # RunPod default regions
-                "gpu_type_id": matching_gpu.get("id"),
-                "display_name": matching_gpu.get("displayName"),
-                "memory_gb": matching_gpu.get("memoryInGb", 0),
+                "secure_price": secure_price,
+                "community_price": community_price,
+                "spot_price": spot_price,
+                "secure_cloud": secure_cloud,
+                "community_cloud": community_cloud,
             }
 
-            logger.info(f"GPU '{gpu_type}' available: ${cost_per_hour}/hr, {result['memory_gb']}GB VRAM")
+            logger.info(
+                f"GPU '{gpu_type}' available: ${cost_per_hour}/hr "
+                f"(secure: ${secure_price}, community: ${community_price}, spot: ${spot_price}) "
+                f"{result['memory_gb']}GB VRAM"
+            )
 
             return result
 
+        except ValueError as e:
+            # GPU not found
+            logger.warning(f"GPU '{gpu_type}' not found: {e}")
+            return {
+                "available": False,
+                "gpu_type_id": None,
+                "display_name": gpu_type,
+                "memory_gb": 0,
+                "max_gpu_count": 0,
+                "cost_per_hour": 0.0,
+                "secure_price": 0.0,
+                "community_price": 0.0,
+                "spot_price": 0.0,
+                "secure_cloud": False,
+                "community_cloud": False,
+            }
         except Exception as e:
             logger.error(f"Error checking GPU availability: {e}", exc_info=True)
             return {
                 "available": False,
-                "count": 0,
-                "cost_per_hour": 0.0,
-                "regions": [],
                 "gpu_type_id": None,
+                "display_name": gpu_type,
+                "memory_gb": 0,
+                "max_gpu_count": 0,
+                "cost_per_hour": 0.0,
+                "secure_price": 0.0,
+                "community_price": 0.0,
+                "spot_price": 0.0,
+                "secure_cloud": False,
+                "community_cloud": False,
             }
 
     def create_pod(self, config: Dict) -> str:
