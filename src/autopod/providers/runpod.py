@@ -397,14 +397,11 @@ class RunPodProvider(CloudProvider):
         try:
             logger.info(f"Stopping pod: {pod_id}")
 
-            result = runpod.stop_pod(pod_id)
+            # RunPod SDK's stop_pod() returns None on success, raises on failure
+            runpod.stop_pod(pod_id)
 
-            if result:
-                logger.info(f"Pod {pod_id} stopped successfully")
-                return True
-            else:
-                logger.warning(f"Failed to stop pod {pod_id}")
-                return False
+            logger.info(f"Pod {pod_id} stopped successfully")
+            return True
 
         except Exception as e:
             logger.error(f"Error stopping pod: {e}", exc_info=True)
@@ -422,14 +419,11 @@ class RunPodProvider(CloudProvider):
         try:
             logger.info(f"Terminating pod: {pod_id}")
 
-            result = runpod.terminate_pod(pod_id)
+            # RunPod SDK's terminate_pod() returns None on success, raises on failure
+            runpod.terminate_pod(pod_id)
 
-            if result:
-                logger.info(f"Pod {pod_id} terminated successfully")
-                return True
-            else:
-                logger.warning(f"Failed to terminate pod {pod_id}")
-                return False
+            logger.info(f"Pod {pod_id} terminated successfully")
+            return True
 
         except Exception as e:
             logger.error(f"Error terminating pod: {e}", exc_info=True)

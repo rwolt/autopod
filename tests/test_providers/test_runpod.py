@@ -234,21 +234,13 @@ def test_get_pod_status_not_found(provider, mock_runpod):
 
 def test_stop_pod_success(provider, mock_runpod):
     """Test successful pod stop."""
-    mock_runpod.stop_pod.return_value = True
+    # RunPod SDK returns None on success
+    mock_runpod.stop_pod.return_value = None
 
     result = provider.stop_pod("pod-abc123")
 
     assert result is True
     mock_runpod.stop_pod.assert_called_once_with("pod-abc123")
-
-
-def test_stop_pod_failure(provider, mock_runpod):
-    """Test pod stop failure."""
-    mock_runpod.stop_pod.return_value = False
-
-    result = provider.stop_pod("pod-abc123")
-
-    assert result is False
 
 
 def test_stop_pod_exception(provider, mock_runpod):
@@ -262,21 +254,13 @@ def test_stop_pod_exception(provider, mock_runpod):
 
 def test_terminate_pod_success(provider, mock_runpod):
     """Test successful pod termination."""
-    mock_runpod.terminate_pod.return_value = True
+    # RunPod SDK returns None on success
+    mock_runpod.terminate_pod.return_value = None
 
     result = provider.terminate_pod("pod-abc123")
 
     assert result is True
     mock_runpod.terminate_pod.assert_called_once_with("pod-abc123")
-
-
-def test_terminate_pod_failure(provider, mock_runpod):
-    """Test pod termination failure."""
-    mock_runpod.terminate_pod.return_value = False
-
-    result = provider.terminate_pod("pod-abc123")
-
-    assert result is False
 
 
 def test_terminate_pod_exception(provider, mock_runpod):
