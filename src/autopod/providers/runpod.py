@@ -291,7 +291,17 @@ class RunPodProvider(CloudProvider):
                 raise RuntimeError(f"Pod creation failed: {pod}")
 
             pod_id = pod["id"]
-            logger.info(f"Pod created successfully: {pod_id}")
+
+            # Extract podHostId from response (needed for SSH)
+            pod_host_id = None
+            if "machine" in pod and pod["machine"]:
+                pod_host_id = pod["machine"].get("podHostId")
+
+            logger.info(f"Pod created successfully: {pod_id}, podHostId: {pod_host_id}")
+
+            # Store pod metadata for SSH access
+            if pod_host_id:
+                self._save_pod_metadata(pod_id, pod_host_id)
 
             return pod_id
 
@@ -315,8 +325,9 @@ class RunPodProvider(CloudProvider):
                 "cost_per_hour": float,
                 "runtime_minutes": float,
                 "total_cost": float,
-                "ssh_host": str,
-                "ssh_port": int,
+                "ssh_host": str,  # For RunPod: "ssh.runpod.io"
+                "ssh_port": int,  # Not used for RunPod (uses proxy)
+                "machine_id": str,  # Machine ID for SSH connection
             }
         """
         try:
@@ -332,6 +343,7 @@ class RunPodProvider(CloudProvider):
             status = pod.get("desiredStatus", "UNKNOWN")
             gpu_count = pod.get("gpuCount", 0)
             cost_per_hour = pod.get("costPerHr", 0.0)
+            machine_id = pod.get("machineId", "")
 
             # Calculate runtime and cost
             runtime_minutes = 0.0
@@ -341,20 +353,17 @@ class RunPodProvider(CloudProvider):
                 runtime_minutes = pod["uptimeInSeconds"] / 60.0
                 total_cost = (runtime_minutes / 60.0) * cost_per_hour
 
-            # Get SSH connection details
+            # RunPod SSH connection details
+            # RunPod uses SSH proxy at ssh.runpod.io, NOT direct port mapping
+            # Connection format: {pod_id}-{machine_id}@ssh.runpod.io
             ssh_host = ""
-            ssh_port = 0
+            ssh_ready = False
 
+            # SSH is available when runtime data exists (container is running)
             if "runtime" in pod and pod["runtime"]:
-                runtime_data = pod["runtime"]
-                if "ports" in runtime_data:
-                    # SSH is typically on port 22 internally
-                    for port_mapping in runtime_data.get("ports", []):
-                        if port_mapping.get("privatePort") == 22:
-                            ssh_port = port_mapping.get("publicPort", 0)
-                            break
-
-                ssh_host = runtime_data.get("host", "")
+                ssh_host = "ssh.runpod.io"
+                ssh_ready = True
+                logger.debug(f"SSH ready for pod {pod_id}: {pod_id}-{machine_id}@{ssh_host}")
 
             # Get GPU type display name
             gpu_type = "Unknown"
@@ -374,10 +383,15 @@ class RunPodProvider(CloudProvider):
                 "runtime_minutes": runtime_minutes,
                 "total_cost": total_cost,
                 "ssh_host": ssh_host,
-                "ssh_port": ssh_port,
+                "ssh_port": 0,  # Not used for RunPod proxy
+                "machine_id": machine_id,
+                "ssh_ready": ssh_ready,
             }
 
-            logger.info(f"Pod {pod_id} status: {status}, runtime: {runtime_minutes:.1f}min, cost: ${total_cost:.4f}")
+            logger.info(
+                f"Pod {pod_id} status: {status}, runtime: {runtime_minutes:.1f}min, "
+                f"cost: ${total_cost:.4f}, ssh_ready: {ssh_ready}"
+            )
 
             return result
 
@@ -432,30 +446,50 @@ class RunPodProvider(CloudProvider):
     def get_ssh_connection_string(self, pod_id: str) -> str:
         """Get SSH connection string for a pod.
 
+        RunPod uses an SSH proxy system at ssh.runpod.io.
+        Connection format: {podHostId}@ssh.runpod.io
+
+        The podHostId is captured during pod creation and stored in
+        ~/.autopod/pods.json since it's not available from get_pod().
+
         Args:
             pod_id: Pod identifier
 
         Returns:
-            SSH connection string in format "user@host:port"
+            SSH connection string in format "{podHostId}@ssh.runpod.io"
+
+        Raises:
+            RuntimeError: If SSH is not yet available or podHostId not found
 
         Example:
-            conn_str = provider.get_ssh_connection_string("pod-abc123")
-            # Returns: "root@ssh.runpod.io:12345"
+            conn_str = provider.get_ssh_connection_string("abc123xyz")
+            # Returns: "abc123xyz-64411540@ssh.runpod.io"
         """
         try:
             logger.debug(f"Getting SSH connection for pod: {pod_id}")
 
-            # Get pod status which includes SSH details
+            # Get pod status to check if SSH is ready
             status = self.get_pod_status(pod_id)
 
+            if not status.get("ssh_ready", False):
+                raise RuntimeError(
+                    f"SSH connection not available for pod {pod_id} "
+                    "(container not started yet)"
+                )
+
+            # Load pod metadata to get podHostId
+            pod_metadata = self._load_pod_metadata(pod_id)
+            if not pod_metadata or "pod_host_id" not in pod_metadata:
+                raise RuntimeError(
+                    f"Pod host ID not found for pod {pod_id}. "
+                    "Pod may have been created outside autopod."
+                )
+
+            pod_host_id = pod_metadata["pod_host_id"]
             ssh_host = status["ssh_host"]
-            ssh_port = status["ssh_port"]
 
-            if not ssh_host or not ssh_port:
-                raise RuntimeError(f"SSH connection not available for pod {pod_id}")
-
-            # RunPod pods typically use root user
-            conn_string = f"root@{ssh_host}:{ssh_port}"
+            # RunPod SSH proxy format: {podHostId}@ssh.runpod.io
+            conn_string = f"{pod_host_id}@{ssh_host}"
 
             logger.info(f"SSH connection string for pod {pod_id}: {conn_string}")
 
@@ -575,3 +609,73 @@ class RunPodProvider(CloudProvider):
 
         # Should never reach here, but just in case
         raise last_exception if last_exception else RuntimeError("Retry failed")
+
+    def _save_pod_metadata(self, pod_id: str, pod_host_id: str) -> None:
+        """Save pod metadata to persistent storage.
+
+        Stores pod metadata (including podHostId) to ~/.autopod/pods.json
+        for SSH access. This is necessary because get_pod() doesn't return
+        the podHostId.
+
+        Args:
+            pod_id: Pod identifier
+            pod_host_id: Pod host ID for SSH (e.g., "abc-123")
+        """
+        import json
+        from pathlib import Path
+
+        # Ensure ~/.autopod directory exists
+        autopod_dir = Path.home() / ".autopod"
+        autopod_dir.mkdir(exist_ok=True, mode=0o700)
+
+        pods_file = autopod_dir / "pods.json"
+
+        # Load existing data
+        pods_data = {}
+        if pods_file.exists():
+            try:
+                with open(pods_file, "r") as f:
+                    pods_data = json.load(f)
+            except Exception as e:
+                logger.warning(f"Could not load pods metadata: {e}")
+
+        # Update with new pod
+        pods_data[pod_id] = {
+            "pod_host_id": pod_host_id,
+            "created_at": datetime.now().isoformat(),
+        }
+
+        # Save back to file
+        try:
+            with open(pods_file, "w") as f:
+                json.dump(pods_data, f, indent=2)
+            # Secure permissions
+            pods_file.chmod(0o600)
+            logger.debug(f"Saved metadata for pod {pod_id}")
+        except Exception as e:
+            logger.error(f"Failed to save pod metadata: {e}")
+
+    def _load_pod_metadata(self, pod_id: str) -> Optional[Dict]:
+        """Load pod metadata from persistent storage.
+
+        Args:
+            pod_id: Pod identifier
+
+        Returns:
+            Dictionary with pod metadata, or None if not found
+        """
+        import json
+        from pathlib import Path
+
+        pods_file = Path.home() / ".autopod" / "pods.json"
+
+        if not pods_file.exists():
+            return None
+
+        try:
+            with open(pods_file, "r") as f:
+                pods_data = json.load(f)
+            return pods_data.get(pod_id)
+        except Exception as e:
+            logger.warning(f"Could not load pod metadata: {e}")
+            return None

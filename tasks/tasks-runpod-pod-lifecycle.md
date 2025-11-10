@@ -60,17 +60,17 @@ Update the file after completing each sub-task, not just after completing an ent
   - [x] 4.2 Configure log format, levels (DEBUG for file, INFO for console), and add filter to redact sensitive data (API keys, credentials)
   - [x] 4.3 Create `tests/test_logging.py` with tests for log directory creation and sensitive data redaction
 
-- [ ] 5.0 Implement RunPod provider
-  - [ ] 5.1 Create `src/autopod/providers/runpod.py` with `RunPodProvider` class, implement authentication and GPU availability checking with type mapping
-  - [ ] 5.2 Implement pod lifecycle methods (create_pod with GPU fallback A40→A6000→A5000, get_pod_status with cost calculation, stop_pod, terminate_pod, get_ssh_connection_string)
-  - [ ] 5.3 Add pod naming (`autopod-YYYY-MM-DD-NNN`), error handling, retry logic with exponential backoff, and logging to all methods
-  - [ ] 5.4 Create `tests/test_providers/test_runpod.py` with mocked API tests and `tests/manual/test_pod_creation.py` manual test script with Rich output
+- [x] 5.0 Implement RunPod provider
+  - [x] 5.1 Create `src/autopod/providers/runpod.py` with `RunPodProvider` class, implement authentication and GPU availability checking with type mapping
+  - [x] 5.2 Implement pod lifecycle methods (create_pod with GPU fallback A40→A6000→A5000, get_pod_status with cost calculation, stop_pod, terminate_pod, get_ssh_connection_string)
+  - [x] 5.3 Add pod naming (`autopod-YYYY-MM-DD-NNN`), error handling, retry logic with exponential backoff, and logging to all methods
+  - [x] 5.4 Create `tests/test_providers/test_runpod.py` with mocked API tests and `tests/manual/test_pod_creation.py` manual test script with Rich output
 
-- [ ] 6.0 Implement SSH tunnel management
-  - [ ] 6.1 Create `src/autopod/ssh.py` with `SSHTunnel` class implementing tunnel lifecycle (create_tunnel, is_alive, close, wait_for_connection)
-  - [ ] 6.2 Implement `open_shell()` for direct SSH exec into pod with host key verification handling and timeout logic
-  - [ ] 6.3 Add comprehensive logging and error handling for connection failures
-  - [ ] 6.4 Create `tests/test_ssh.py` with tests using mocked subprocess calls
+- [x] 6.0 Implement SSH tunnel management
+  - [x] 6.1 Create `src/autopod/ssh.py` with `SSHTunnel` class implementing tunnel lifecycle (create_tunnel, is_alive, close, wait_for_connection)
+  - [x] 6.2 Implement `open_shell()` for direct SSH exec into pod with host key verification handling and timeout logic
+  - [x] 6.3 Add comprehensive logging and error handling for connection failures
+  - [x] 6.4 Create `tests/test_ssh.py` with tests using mocked subprocess calls
 
 - [ ] 7.0 Implement pod control commands
   - [ ] 7.1 Create `src/autopod/pod_manager.py` with `PodManager` class implementing list_pods, get_pod_info, stop_pod, terminate_pod, shell_into_pod methods

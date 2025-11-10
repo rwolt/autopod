@@ -10,32 +10,56 @@
 - Monitor job completion to minimize idle compute time
 - Serve as the backbone for a future video rendering pipeline
 
-### Key Features
+### Development Roadmap
 
-**Version 1 (MVP - Single Pod, Sequential Jobs):**
-- Create RunPod pods programmatically via API
-- Establish SSH tunnel to remote ComfyUI instance (localhost:8188 → pod:8188)
-- Read jobs from local filesystem (JSON format)
-- Transfer input files via SCP
-- Submit jobs to ComfyUI API using parameterized workflow templates
-- WebSocket-based real-time job status monitoring
-- Rich terminal UI with live progress, cost tracking, and keyboard controls
-- Interactive controls: Open ComfyUI GUI in browser, kill/stop pod, view logs
-- Safe shutdown handling (Ctrl+C triggers graceful pod stop)
-- Stuck job detection and cost safety warnings
+**V1 - Pod Lifecycle & SSH (PRD #1 - Current)**
+- Pod lifecycle management (create, stop, terminate, status, list)
+- SSH tunnel management (port forwarding to pod services)
+- SSH command execution (interactive shell + non-interactive)
+- CLI interface with **Rich terminal output** (tables, panels, progress)
+- Configuration management (API keys, SSH keys, defaults)
+- Full test coverage with real RunPod API
 
-**Version 2 (Multi-Pod, Parallel Jobs):**
-- Multiple SSH tunnels (one per pod on unique ports: 8188, 8189, 8190...)
-- One pod per job for parallel execution
-- Textualize TUI for managing multiple pods (table view, interactive selection)
-- Aggregate cost monitoring across all running pods
-- Cloudflare R2 for job queue and file storage
+**V1.5 - ComfyUI Integration (PRD #2)**
+- ComfyUI HTTP API client (via SSH tunnel)
+- File upload/download via ComfyUI HTTP API (primary method)
+- Network volume attachment (pod creation parameter)
+- Workflow submission and execution
+- ComfyUI WebSocket monitoring (real-time progress via SSH tunnel)
+- Output retrieval and status tracking
+- **Note**: SCP not used (default template exposes port 22 but lacks sshd daemon)
 
-**Version 3 (Cloud-Native Pipeline):**
-- Long-running worker pods that poll R2 for jobs
-- RunPod Network Volumes for model storage and output buffering
-- Multi-tier storage: Network Volume (30-day cache) + R2 (permanent)
-- Fully autonomous operation (no Mac connection required)
+**V2 - Job Management & Safety (PRD #3)**
+- Sequential job queue (single pod, multiple jobs)
+- Cost safety (budget limits, timeout warnings, stuck detection)
+- Enhanced Rich UI (live progress bars, cost tracking, keyboard controls)
+- Interactive controls (open browser GUI, view logs, graceful shutdown)
+- WebSocket monitoring with retry and fallback
+
+**V3 - Multi-Pod Parallelization (PRD #4)**
+- Multiple SSH tunnels (unique ports per pod)
+- Parallel job execution (one pod per job)
+- Multi-pod monitoring and cost aggregation
+- Textualize TUI (optional - for visual multi-pod management)
+
+**V4+ - Advanced Features (Future)**
+- Custom RunPod template management
+- Cloudflare R2 (fallback if network volume insufficient)
+- Long-running worker pods (autonomous operation)
+- Advanced cost optimization
+
+### Monitoring Architecture
+
+**Pod-Level Metrics** (RunPod GraphQL API):
+- GPU utilization, memory usage
+- Pod cost, runtime, status
+- SSH availability
+
+**Workflow-Level Metrics** (ComfyUI API + WebSocket):
+- Workflow progress, current node
+- Output file status
+- Real-time updates via WebSocket (through SSH tunnel)
+- Both HTTP and WebSocket go through same SSH tunnel
 
 ### Technology Stack
 
