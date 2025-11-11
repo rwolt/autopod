@@ -67,7 +67,7 @@ Update the file after completing each sub-task, not just after completing an ent
 - [x] 0.0 Create feature branch
   - [x] 0.1 Create and checkout a new branch for this feature (e.g., `git checkout -b feature/v1.2-comfyui-integration`)
 
-- [ ] 1.0 Add network volume support to pod creation
+- [x] 1.0 Add network volume support to pod creation
   - [x] 1.1 Read `src/autopod/providers/base.py` to understand Provider interface
   - [x] 1.2 Read `src/autopod/providers/runpod.py` to understand current create_pod() implementation
   - [x] 1.3 Read `src/autopod/config.py` to understand config structure
@@ -80,9 +80,9 @@ Update the file after completing each sub-task, not just after completing an ent
   - [x] 1.10 Add volume datacenter validation logic (warn if datacenter mismatch)
   - [x] 1.11 Update pod_manager to store volume info in pods.json state
   - [x] 1.12 Update pod_manager.get_pod_info() to display volume information
-  - [ ] 1.13 Test: Create pod with --volume-id flag and verify volume is attached
-  - [ ] 1.14 Test: SSH into pod and verify volume is mounted at correct path
-  - [ ] 1.15 Test: Run autopod info and verify volume information is displayed
+  - [x] 1.13 Test: Create pod with --volume-id flag and verify volume is attached
+  - [x] 1.14 Test: SSH into pod and verify volume is mounted at correct path
+  - [x] 1.15 Test: Run autopod info and verify volume information is displayed
 
 - [ ] 2.0 Implement SSH tunnel management module
   - [ ] 2.1 Create new file `src/autopod/tunnel.py`
