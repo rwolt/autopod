@@ -223,6 +223,84 @@ class RunPodProvider(CloudProvider):
                 "community_cloud": False,
             }
 
+    def get_volume_info(self, volume_id: str) -> Optional[Dict]:
+        """Get information about a network volume.
+
+        Args:
+            volume_id: Network volume ID
+
+        Returns:
+            Dictionary with volume info:
+            {
+                "id": str,
+                "name": str,
+                "size": int,  # GB
+                "dataCenterId": str
+            }
+            Returns None if volume not found
+
+        Raises:
+            ConnectionError: If unable to query volumes
+        """
+        try:
+            import requests
+
+            # Query RunPod API for network volumes
+            response = requests.get(
+                "https://rest.runpod.io/v1/networkvolumes",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=10
+            )
+            response.raise_for_status()
+
+            volumes = response.json()
+
+            # Find the requested volume
+            for volume in volumes:
+                if volume.get("id") == volume_id:
+                    logger.info(f"Found volume {volume_id}: {volume.get('name')} in {volume.get('dataCenterId')}")
+                    return volume
+
+            # Volume not found
+            logger.warning(f"Volume {volume_id} not found")
+            return None
+
+        except requests.RequestException as e:
+            logger.error(f"Error fetching volume info: {e}", exc_info=True)
+            raise ConnectionError(f"Failed to query network volumes: {e}") from e
+
+    def check_volume_datacenter(self, volume_id: str, datacenter_id: Optional[str]) -> bool:
+        """Check if volume is in the specified datacenter.
+
+        Args:
+            volume_id: Network volume ID
+            datacenter_id: Datacenter ID to check (if None, returns True)
+
+        Returns:
+            True if volume is in datacenter (or datacenter not specified), False otherwise
+
+        Raises:
+            RuntimeError: If volume doesn't exist
+        """
+        if not datacenter_id:
+            # No datacenter specified, so any location is fine
+            return True
+
+        volume_info = self.get_volume_info(volume_id)
+        if not volume_info:
+            raise RuntimeError(f"Network volume {volume_id} not found")
+
+        volume_dc = volume_info.get("dataCenterId")
+        matches = volume_dc == datacenter_id
+
+        if not matches:
+            logger.warning(
+                f"Volume {volume_id} is in {volume_dc}, "
+                f"but pod will be created in {datacenter_id}"
+            )
+
+        return matches
+
     def create_pod(self, config: Dict) -> str:
         """Create a new pod with specified configuration.
 
@@ -265,6 +343,38 @@ class RunPodProvider(CloudProvider):
 
             gpu_type_id = gpu_info["gpu_type_id"]
 
+            # Validate network volume if specified
+            volume_id = config.get("volume_id")
+            volume_mount = config.get("volume_mount", "/workspace")
+            datacenter_id = config.get("data_center_id")
+
+            if volume_id:
+                # Validate volume exists and check datacenter match
+                try:
+                    volume_info = self.get_volume_info(volume_id)
+                    if not volume_info:
+                        raise RuntimeError(f"Network volume '{volume_id}' not found")
+
+                    # Check datacenter compatibility
+                    if datacenter_id:
+                        volume_dc = volume_info.get("dataCenterId")
+                        if volume_dc != datacenter_id:
+                            logger.warning(
+                                f"Volume {volume_id} is in {volume_dc}, "
+                                f"but pod datacenter is {datacenter_id}. "
+                                f"Volume attachment may fail."
+                            )
+                    else:
+                        # If no datacenter specified, use volume's datacenter
+                        datacenter_id = volume_info.get("dataCenterId")
+                        logger.info(f"Using volume's datacenter: {datacenter_id}")
+
+                    logger.info(f"Attaching network volume {volume_id} ({volume_info.get('name')}) at {volume_mount}")
+
+                except ConnectionError as e:
+                    # Non-fatal: continue without volume validation
+                    logger.warning(f"Could not validate volume: {e}")
+
             # Build pod creation parameters
             pod_params = {
                 "name": self._generate_pod_name(),
@@ -273,17 +383,19 @@ class RunPodProvider(CloudProvider):
                 "gpu_count": gpu_count,
                 "cloud_type": cloud_type,
                 "container_disk_in_gb": config.get("disk_size_gb", 50),
+                "volume_in_gb": 0,  # Don't use pod volume (we use network volumes instead)
             }
 
             # Add optional parameters
-            if "volume_id" in config:
-                pod_params["volume_in_gb"] = config["volume_id"]
+            if volume_id:
+                pod_params["network_volume_id"] = volume_id
+                pod_params["volume_mount_path"] = volume_mount
 
             if "env_vars" in config:
                 pod_params["env"] = config["env_vars"]
 
-            if "data_center_id" in config:
-                pod_params["data_center_id"] = config["data_center_id"]
+            if datacenter_id:
+                pod_params["data_center_id"] = datacenter_id
 
             logger.debug(f"Pod creation params: {pod_params}")
 

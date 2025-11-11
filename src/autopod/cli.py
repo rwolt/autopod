@@ -159,12 +159,14 @@ def config_init():
 @click.option("--gpu-count", type=int, default=1, help="Number of GPUs (default: 1)")
 @click.option("--disk-size", type=int, default=50, help="Disk size in GB (default: 50)")
 @click.option("--datacenter", type=str, help="Datacenter region (e.g., 'CA-MTL-1', 'US-GA-1')")
+@click.option("--volume-id", type=str, help="Network volume ID to attach")
+@click.option("--volume-mount", type=str, default="/workspace", help="Volume mount path (default: /workspace)")
 @click.option("--template", type=str, help="Docker template (overrides config default)")
 @click.option("--cloud-type", type=click.Choice(["SECURE", "COMMUNITY", "ALL"], case_sensitive=False),
               help="Cloud type (default: SECURE)")
 @click.option("--dry-run", is_flag=True, help="Show what would be created without creating")
 @click.option("--interactive", is_flag=True, help="Interactive mode with prompts")
-def connect(gpu, gpu_count, disk_size, datacenter, template, cloud_type, dry_run, interactive):
+def connect(gpu, gpu_count, disk_size, datacenter, volume_id, volume_mount, template, cloud_type, dry_run, interactive):
     """Create and connect to a new pod.
 
     By default, uses GPU preferences from config with smart fallback.
@@ -203,6 +205,13 @@ def connect(gpu, gpu_count, disk_size, datacenter, template, cloud_type, dry_run
         # Determine datacenter (CLI flag > config > none)
         datacenter_value = datacenter or runpod_config.get("default_datacenter")
 
+        # Determine volume (CLI flag > config > none)
+        volume_id_value = volume_id or runpod_config.get("default_volume_id")
+        if volume_id_value:
+            volume_mount_value = volume_mount  # CLI flag provides default /workspace
+        else:
+            volume_mount_value = None
+
         # Build pod configuration
         pod_config = {
             "gpu_type": gpu_type,
@@ -216,6 +225,11 @@ def connect(gpu, gpu_count, disk_size, datacenter, template, cloud_type, dry_run
         if datacenter_value:
             pod_config["data_center_id"] = datacenter_value
 
+        # Add volume if specified
+        if volume_id_value:
+            pod_config["volume_id"] = volume_id_value
+            pod_config["volume_mount"] = volume_mount_value
+
         # Show configuration
         console.print("\n[bold cyan]Pod Configuration:[/bold cyan]")
         console.print(f"  GPU:        {pod_config['gpu_count']}x {pod_config['gpu_type']}")
@@ -224,6 +238,8 @@ def connect(gpu, gpu_count, disk_size, datacenter, template, cloud_type, dry_run
         console.print(f"  Cloud:      {pod_config['cloud_type']}")
         if datacenter_value:
             console.print(f"  Datacenter: {datacenter_value}")
+        if volume_id_value:
+            console.print(f"  Volume:     {volume_id_value} → {volume_mount_value}")
 
         if dry_run:
             console.print("\n[yellow]DRY RUN - No pod will be created[/yellow]")

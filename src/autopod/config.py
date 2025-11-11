@@ -53,7 +53,9 @@ def get_default_config() -> Dict:
                 "ssh_key_path": "",
                 "default_template": "runpod/comfyui:latest",
                 "default_region": "NA-US",
-                "cloud_type": "secure"
+                "cloud_type": "secure",
+                "default_volume_id": "",  # Optional: Network volume ID to attach by default
+                "default_volume_mount": "/workspace"  # Where to mount the volume
             }
         },
         "defaults": {

@@ -64,20 +64,20 @@ Update the file after completing each sub-task, not just after completing an ent
 
 ## Tasks
 
-- [ ] 0.0 Create feature branch
-  - [ ] 0.1 Create and checkout a new branch for this feature (e.g., `git checkout -b feature/v1.2-comfyui-integration`)
+- [x] 0.0 Create feature branch
+  - [x] 0.1 Create and checkout a new branch for this feature (e.g., `git checkout -b feature/v1.2-comfyui-integration`)
 
 - [ ] 1.0 Add network volume support to pod creation
-  - [ ] 1.1 Read `src/autopod/providers/base.py` to understand Provider interface
-  - [ ] 1.2 Read `src/autopod/providers/runpod.py` to understand current create_pod() implementation
-  - [ ] 1.3 Read `src/autopod/config.py` to understand config structure
-  - [ ] 1.4 Update config.py to add volume fields (default_volume_id, default_volume_mount)
-  - [ ] 1.5 Add volume validation method to RunPodProvider (get_volume_info, check_volume_datacenter)
-  - [ ] 1.6 Update RunPodProvider.create_pod() to accept volume_id and volume_mount parameters
-  - [ ] 1.7 Add network_volume_id and volume_mount_path to pod creation API call
-  - [ ] 1.8 Update CLI connect() command to add --volume-id and --volume-mount flags
-  - [ ] 1.9 Add logic to read volume config from config file (CLI flag overrides config)
-  - [ ] 1.10 Add volume datacenter validation logic (warn if datacenter mismatch)
+  - [x] 1.1 Read `src/autopod/providers/base.py` to understand Provider interface
+  - [x] 1.2 Read `src/autopod/providers/runpod.py` to understand current create_pod() implementation
+  - [x] 1.3 Read `src/autopod/config.py` to understand config structure
+  - [x] 1.4 Update config.py to add volume fields (default_volume_id, default_volume_mount)
+  - [x] 1.5 Add volume validation method to RunPodProvider (get_volume_info, check_volume_datacenter)
+  - [x] 1.6 Update RunPodProvider.create_pod() to accept volume_id and volume_mount parameters
+  - [x] 1.7 Add network_volume_id and volume_mount_path to pod creation API call
+  - [x] 1.8 Update CLI connect() command to add --volume-id and --volume-mount flags
+  - [x] 1.9 Add logic to read volume config from config file (CLI flag overrides config)
+  - [x] 1.10 Add volume datacenter validation logic (warn if datacenter mismatch)
   - [ ] 1.11 Update pod_manager to store volume info in pods.json state
   - [ ] 1.12 Update pod_manager.get_pod_info() to display volume information
   - [ ] 1.13 Test: Create pod with --volume-id flag and verify volume is attached
