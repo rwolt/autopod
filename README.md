@@ -90,6 +90,14 @@ Or execute a command:
 autopod ssh -c "nvidia-smi"
 ```
 
+**Note:** If your SSH key has a passphrase, add it to ssh-agent to avoid authentication issues:
+
+```bash
+ssh-add ~/.ssh/id_ed25519_runpod
+```
+
+autopod will automatically detect passphrase-protected keys and provide guidance if needed.
+
 ### 4. Manage Your Pods
 
 List all pods:
