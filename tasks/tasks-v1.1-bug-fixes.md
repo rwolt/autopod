@@ -108,15 +108,15 @@ Update the file after completing each sub-task, not just after completing an ent
   - [x] 5.13 Verify all tests pass against real RunPod API
   - [x] 5.14 Document any limitations discovered (e.g., if datacenter not supported by API)
 
-- [ ] 6.0 Final validation and commit
-  - [ ] 6.1 Run through complete user workflow: `autopod config init` → `autopod connect` → `autopod ls` → `autopod info` → `autopod ssh` → `autopod kill`
-  - [ ] 6.2 Test stale pod scenario end-to-end: Create pod, terminate in UI, run all commands, verify graceful handling
-  - [ ] 6.3 Check all log files for errors: Review `~/.autopod/logs/autopod.log` for unexpected errors
-  - [ ] 6.4 Verify backward compatibility: Existing config files still work without modification
-  - [ ] 6.5 Review all code changes for code quality (consistent style, proper error handling, helpful comments)
-  - [ ] 6.6 Commit changes: `git add .` and `git commit -m "Fix V1.1 critical bugs: stale pod cleanup, 50GB disk default, datacenter option, improved error messages"`
-  - [ ] 6.7 Update task list: Mark all tasks as complete in this file
-  - [ ] 6.8 Ready for merge to main branch (or await review)
+- [x] 6.0 Final validation and commit
+  - [x] 6.1 Run through complete user workflow: `autopod config init` → `autopod connect` → `autopod ls` → `autopod info` → `autopod ssh` → `autopod kill`
+  - [x] 6.2 Test stale pod scenario end-to-end: Create pod, terminate in UI, run all commands, verify graceful handling
+  - [x] 6.3 Check all log files for errors: Review `~/.autopod/logs/autopod.log` for unexpected errors
+  - [x] 6.4 Verify backward compatibility: Existing config files still work without modification
+  - [x] 6.5 Review all code changes for code quality (consistent style, proper error handling, helpful comments)
+  - [x] 6.6 Commit changes: `git add .` and `git commit -m "Fix V1.1 critical bugs: stale pod cleanup, 50GB disk default, datacenter option, improved error messages"`
+  - [x] 6.7 Update task list: Mark all tasks as complete in this file
+  - [x] 6.8 Ready for merge to main branch (or await review)
 
 ## Testing Approach
 
