@@ -28,6 +28,7 @@ setup(
         "websocket-client>=1.6.0",
         "paramiko>=3.3.0",
         "runpod>=1.5.0",
+        "click>=8.1.0",
     ],
     extras_require={
         "dev": [

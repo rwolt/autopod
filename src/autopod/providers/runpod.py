@@ -231,9 +231,9 @@ class RunPodProvider(CloudProvider):
                 - gpu_type (str): GPU display name (e.g., "RTX A40")
                 - gpu_count (int): Number of GPUs (default: 1)
                 - template (str): Docker template name (default: from config)
-                - region (str): Preferred region (default: "NA-US")
+                - data_center_id (str, optional): Datacenter ID (e.g., "CA-MTL-1")
                 - volume_id (str, optional): Network volume ID
-                - cloud_type (str): "secure" or "community" (default: "secure")
+                - cloud_type (str): "SECURE" or "ALL" (default: "SECURE")
                 - disk_size_gb (int): Container disk size (default: 50)
                 - env_vars (Dict, optional): Environment variables
 
@@ -281,6 +281,9 @@ class RunPodProvider(CloudProvider):
 
             if "env_vars" in config:
                 pod_params["env"] = config["env_vars"]
+
+            if "data_center_id" in config:
+                pod_params["data_center_id"] = config["data_center_id"]
 
             logger.debug(f"Pod creation params: {pod_params}")
 
@@ -419,6 +422,35 @@ class RunPodProvider(CloudProvider):
 
         except Exception as e:
             logger.error(f"Error stopping pod: {e}", exc_info=True)
+            return False
+
+    def start_pod(self, pod_id: str) -> bool:
+        """Start (resume) a stopped pod.
+
+        Note: GPU availability is not guaranteed. The pod may start with a
+        different GPU or as CPU-only if the original GPU type is unavailable.
+
+        Args:
+            pod_id: Pod identifier
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            logger.info(f"Starting pod: {pod_id}")
+
+            # RunPod SDK's resume_pod() returns None on success, raises on failure
+            runpod.resume_pod(pod_id)
+
+            logger.info(f"Pod {pod_id} started successfully")
+            logger.warning(
+                f"Pod {pod_id} resumed - GPU availability not guaranteed. "
+                "Check pod status to verify GPU type."
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Error starting pod: {e}", exc_info=True)
             return False
 
     def terminate_pod(self, pod_id: str) -> bool:

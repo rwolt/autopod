@@ -72,11 +72,11 @@ Update the file after completing each sub-task, not just after completing an ent
   - [x] 6.3 Add comprehensive logging and error handling for connection failures
   - [x] 6.4 Create `tests/test_ssh.py` with tests using mocked subprocess calls
 
-- [ ] 7.0 Implement pod control commands
-  - [ ] 7.1 Create `src/autopod/pod_manager.py` with `PodManager` class implementing list_pods, get_pod_info, stop_pod, terminate_pod, shell_into_pod methods
-  - [ ] 7.2 Add Rich formatting (Table for list, Panel for info) with runtime and cost display
-  - [ ] 7.3 Implement state persistence to `~/.autopod/pods.json` (save_pod_state, load_pod_state functions)
-  - [ ] 7.4 Create `tests/test_pod_manager.py` with tests for pod listing and state persistence
+- [x] 7.0 Implement pod control commands
+  - [x] 7.1 Create `src/autopod/pod_manager.py` with `PodManager` class implementing list_pods, get_pod_info, stop_pod, terminate_pod, shell_into_pod methods
+  - [x] 7.2 Add Rich formatting (Table for list, Panel for info) with runtime and cost display
+  - [x] 7.3 Implement state persistence to `~/.autopod/pods.json` (save_pod_state, load_pod_state functions)
+  - [x] 7.4 Create `tests/test_pod_manager.py` with tests for pod listing and state persistence
 
 - [ ] 8.0 Implement CLI interface
   - [ ] 8.1 Create `src/autopod/cli.py` with main entry point and implement `config init` command with Rich wizard flow

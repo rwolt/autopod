@@ -153,6 +153,26 @@ class CloudProvider(ABC):
         pass
 
     @abstractmethod
+    def start_pod(self, pod_id: str) -> bool:
+        """Start (resume) a stopped pod.
+
+        Resumes a previously stopped pod. Note that GPU availability is not
+        guaranteed - the pod may start with a different GPU or as CPU-only
+        if the original GPU type is unavailable.
+
+        Args:
+            pod_id: The unique identifier for the pod
+
+        Returns:
+            True if start successful, False otherwise
+
+        Raises:
+            ValueError: If pod_id is invalid or pod not found
+            RuntimeError: If start operation fails or pod already running
+        """
+        pass
+
+    @abstractmethod
     def terminate_pod(self, pod_id: str) -> bool:
         """Terminate (destroy) a pod permanently.
 

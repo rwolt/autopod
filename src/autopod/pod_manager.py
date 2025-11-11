@@ -83,25 +83,39 @@ class PodManager:
                     self.console.print("[yellow]No pods found[/yellow]")
                 return []
 
-            # Get status for each pod
+            # Get status for each pod and track stale pods
             pods_info = []
+            stale_pods = []
+
             for pod_id in pod_state.keys():
                 try:
                     status = self.provider.get_pod_status(pod_id)
                     pods_info.append(status)
+                except RuntimeError as e:
+                    # Check if this is a "pod not found" error (stale pod)
+                    if "not found" in str(e).lower():
+                        logger.info(f"Removing stale pod from cache: {pod_id}")
+                        self._remove_pod_from_state(pod_id)
+                        stale_pods.append(pod_id)
+                    else:
+                        # Other runtime errors - log and skip
+                        logger.warning(f"Could not get status for pod {pod_id}: {e}")
                 except Exception as e:
+                    # Network errors or other issues - log but don't remove from cache
                     logger.warning(f"Could not get status for pod {pod_id}: {e}")
-                    # Keep pod in list but mark as unknown
-                    pods_info.append({
-                        "pod_id": pod_id,
-                        "status": "UNKNOWN",
-                        "gpu_type": "N/A",
-                        "gpu_count": 0,
-                        "cost_per_hour": 0.0,
-                        "runtime_minutes": 0.0,
-                        "total_cost": 0.0,
-                        "ssh_ready": False,
-                    })
+
+            # Notify user if stale pods were cleaned up
+            if stale_pods and show_table:
+                self.console.print(
+                    f"[yellow]Removed {len(stale_pods)} stale pod(s) from cache[/yellow]"
+                )
+                logger.info(f"Cleaned up stale pods: {', '.join(stale_pods)}")
+
+            # Check if we have any pods left after cleanup
+            if not pods_info:
+                if show_table:
+                    self.console.print("[yellow]No pods found[/yellow]")
+                return []
 
             if show_table:
                 self._print_pods_table(pods_info)
@@ -145,6 +159,18 @@ class PodManager:
 
             return status
 
+        except RuntimeError as e:
+            # Check if this is a "pod not found" error
+            if "not found" in str(e).lower():
+                logger.info(f"Pod {pod_id} not found")
+                if show_panel:
+                    self.console.print(f"[red]✗ Pod {pod_id} not found[/red]")
+                    self.console.print("[dim]It may have been terminated. Run 'autopod ls' to see available pods.[/dim]")
+            else:
+                logger.error(f"Error getting pod info: {e}", exc_info=True)
+                if show_panel:
+                    self.console.print(f"[red]Error getting pod info: {e}[/red]")
+            return None
         except Exception as e:
             logger.error(f"Error getting pod info: {e}", exc_info=True)
             if show_panel:
@@ -182,6 +208,44 @@ class PodManager:
         except Exception as e:
             logger.error(f"Error stopping pod: {e}", exc_info=True)
             self.console.print(f"[red]✗ Error stopping pod: {e}[/red]")
+            return False
+
+    def start_pod(self, pod_id: str) -> bool:
+        """Start (resume) a stopped pod.
+
+        Resumes a previously stopped pod. Note that GPU availability is not
+        guaranteed - the pod may restart with a different GPU or as CPU-only.
+
+        Args:
+            pod_id: Pod identifier
+
+        Returns:
+            True if successful, False otherwise
+
+        Example:
+            >>> manager.start_pod("abc-123")
+            ✓ Pod abc-123 started successfully
+            ⚠ GPU availability not guaranteed - check pod info to verify GPU type
+        """
+        logger.info(f"Starting pod: {pod_id}")
+
+        try:
+            success = self.provider.start_pod(pod_id)
+
+            if success:
+                self.console.print(f"[green]✓ Pod {pod_id} started successfully[/green]")
+                self.console.print(
+                    "[yellow]⚠ GPU availability not guaranteed - "
+                    "check pod info to verify GPU type[/yellow]"
+                )
+            else:
+                self.console.print(f"[yellow]⚠ Failed to start pod {pod_id}[/yellow]")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"Error starting pod: {e}", exc_info=True)
+            self.console.print(f"[red]✗ Error starting pod: {e}[/red]")
             return False
 
     def terminate_pod(self, pod_id: str, confirm: bool = False) -> bool:
@@ -363,11 +427,22 @@ class PodManager:
         table.add_column("Cost", justify="right", style="red")
 
         for pod in pods:
-            pod_id = pod["pod_id"]
-            status = pod["status"]
-            gpu = f"{pod['gpu_count']}x {pod['gpu_type']}"
-            runtime = f"{pod['runtime_minutes']:.1f} min"
-            cost = f"${pod['total_cost']:.4f}"
+            pod_id = pod.get("pod_id", "unknown")
+            status = pod.get("status", "UNKNOWN")
+
+            # Handle missing GPU metadata gracefully
+            gpu_count = pod.get("gpu_count", 0)
+            gpu_type = pod.get("gpu_type", "Unknown GPU")
+            if gpu_count > 0:
+                gpu = f"{gpu_count}x {gpu_type}"
+            else:
+                gpu = "N/A"
+
+            # Handle missing runtime/cost metadata gracefully
+            runtime_minutes = pod.get("runtime_minutes", 0.0)
+            total_cost = pod.get("total_cost", 0.0)
+            runtime = f"{runtime_minutes:.1f} min"
+            cost = f"${total_cost:.4f}"
 
             # Color code status
             if status == "RUNNING":
@@ -389,15 +464,29 @@ class PodManager:
         Args:
             pod: Pod status dictionary
         """
-        pod_id = pod["pod_id"]
+        pod_id = pod.get("pod_id", "unknown")
+
+        # Handle missing metadata gracefully
+        status = pod.get("status", "UNKNOWN")
+        gpu_count = pod.get("gpu_count", 0)
+        gpu_type = pod.get("gpu_type", "Unknown GPU")
+        cost_per_hour = pod.get("cost_per_hour", 0.0)
+        runtime_minutes = pod.get("runtime_minutes", 0.0)
+        total_cost = pod.get("total_cost", 0.0)
+
+        # Format GPU display
+        if gpu_count > 0:
+            gpu_display = f"{gpu_count}x {gpu_type}"
+        else:
+            gpu_display = "N/A"
 
         # Build info text
         info_lines = [
-            f"[bold]Status:[/bold]       {pod['status']}",
-            f"[bold]GPU:[/bold]          {pod['gpu_count']}x {pod['gpu_type']}",
-            f"[bold]Cost/hour:[/bold]    ${pod['cost_per_hour']:.2f}",
-            f"[bold]Runtime:[/bold]      {pod['runtime_minutes']:.1f} minutes",
-            f"[bold]Total cost:[/bold]   ${pod['total_cost']:.4f}",
+            f"[bold]Status:[/bold]       {status}",
+            f"[bold]GPU:[/bold]          {gpu_display}",
+            f"[bold]Cost/hour:[/bold]    ${cost_per_hour:.2f}",
+            f"[bold]Runtime:[/bold]      {runtime_minutes:.1f} minutes",
+            f"[bold]Total cost:[/bold]   ${total_cost:.4f}",
         ]
 
         # Add SSH info if available
@@ -409,8 +498,7 @@ class PodManager:
 
         info_text = "\n".join(info_lines)
 
-        # Color code panel based on status
-        status = pod["status"]
+        # Color code panel based on status (already extracted above)
         if status == "RUNNING":
             border_style = "green"
         elif status == "STOPPED":
