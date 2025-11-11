@@ -6,18 +6,24 @@ A lightweight CLI controller for managing RunPod GPU instances with ease.
 
 autopod automates the process of creating, managing, and accessing RunPod GPU pods through an intuitive command-line interface. It provides smart GPU selection with automatic fallback, SSH access, and comprehensive pod lifecycle management - all designed to help you save money on compute costs.
 
-**Status:** Version 1.0 - Pod Lifecycle Management
+**Status:** Version 1.1 - Production Ready
 
 ## Features
 
+### V1.1 (Current)
 - **Smart Pod Creation** - Automatic GPU selection with fallback preferences
-- **SSH Access** - Seamless shell access and command execution
+- **Datacenter Selection** - Specify datacenter via `--datacenter` flag (e.g., CA-MTL-1)
+- **Optimized Defaults** - 50GB container disk by default (perfect for ComfyUI)
+- **Auto-Cleanup** - Stale pods automatically removed from cache
+- **SSH Access** - Seamless shell access and command execution (with PTY-free mode)
 - **Pod Management** - List, info, start, stop, and terminate operations
 - **Cost Management** - Stop pods to reduce costs (~$0.02/hr), restart when needed
 - **Rich Terminal UI** - Beautiful tables, progress bars, and formatted output
 - **Auto-Select** - Commands work without pod ID when only one pod exists
 - **Configuration Management** - Simple setup wizard with SSH key detection
 - **Cost Visibility** - Real-time cost tracking and runtime display
+- **Improved Error Messages** - Helpful hints guide you to solutions
+- **Robust Metadata Handling** - Gracefully handles missing pod information
 
 ## Installation
 

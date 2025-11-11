@@ -410,6 +410,8 @@ def ssh(pod_id, command):
             # Build SSH command
             import subprocess
             cmd = ["ssh"]
+            # Disable PTY allocation for command execution (RunPod proxy doesn't support it)
+            cmd.append("-T")
             if ssh_info["port"] is not None:
                 cmd.extend(["-p", str(ssh_info["port"])])
             cmd.extend([
