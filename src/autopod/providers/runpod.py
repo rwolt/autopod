@@ -439,8 +439,16 @@ class RunPodProvider(CloudProvider):
         try:
             logger.info(f"Starting pod: {pod_id}")
 
-            # RunPod SDK's resume_pod() returns None on success, raises on failure
-            runpod.resume_pod(pod_id)
+            # Get pod info to retrieve GPU count (required by resume_pod)
+            pod = runpod.get_pod(pod_id)
+            if not pod:
+                raise RuntimeError(f"Pod {pod_id} not found")
+
+            gpu_count = pod.get("gpuCount", 1)
+            logger.debug(f"Resuming pod {pod_id} with {gpu_count} GPU(s)")
+
+            # RunPod SDK's resume_pod() requires pod_id and gpu_count
+            runpod.resume_pod(pod_id, gpu_count)
 
             logger.info(f"Pod {pod_id} started successfully")
             logger.warning(
