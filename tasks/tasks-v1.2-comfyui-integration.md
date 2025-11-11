@@ -78,8 +78,8 @@ Update the file after completing each sub-task, not just after completing an ent
   - [x] 1.8 Update CLI connect() command to add --volume-id and --volume-mount flags
   - [x] 1.9 Add logic to read volume config from config file (CLI flag overrides config)
   - [x] 1.10 Add volume datacenter validation logic (warn if datacenter mismatch)
-  - [ ] 1.11 Update pod_manager to store volume info in pods.json state
-  - [ ] 1.12 Update pod_manager.get_pod_info() to display volume information
+  - [x] 1.11 Update pod_manager to store volume info in pods.json state
+  - [x] 1.12 Update pod_manager.get_pod_info() to display volume information
   - [ ] 1.13 Test: Create pod with --volume-id flag and verify volume is attached
   - [ ] 1.14 Test: SSH into pod and verify volume is mounted at correct path
   - [ ] 1.15 Test: Run autopod info and verify volume information is displayed

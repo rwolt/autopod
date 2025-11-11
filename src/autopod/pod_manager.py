@@ -496,6 +496,12 @@ class PodManager:
         else:
             info_lines.append(f"[bold]SSH:[/bold]          Not ready")
 
+        # Add volume info if available
+        if pod.get("volume_id"):
+            volume_id = pod.get("volume_id")
+            volume_mount = pod.get("volume_mount", "/workspace")
+            info_lines.append(f"[bold]Volume:[/bold]       {volume_id} → {volume_mount}")
+
         info_text = "\n".join(info_lines)
 
         # Color code panel based on status (already extracted above)

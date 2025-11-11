@@ -414,9 +414,13 @@ class RunPodProvider(CloudProvider):
 
             logger.info(f"Pod created successfully: {pod_id}, podHostId: {pod_host_id}")
 
-            # Store pod metadata for SSH access
+            # Store pod metadata for SSH access and volume info
             if pod_host_id:
-                self._save_pod_metadata(pod_id, pod_host_id)
+                metadata = {"pod_host_id": pod_host_id}
+                if volume_id:
+                    metadata["volume_id"] = volume_id
+                    metadata["volume_mount"] = volume_mount
+                self._save_pod_metadata(pod_id, metadata)
 
             return pod_id
 
@@ -502,6 +506,13 @@ class RunPodProvider(CloudProvider):
                 "machine_id": machine_id,
                 "ssh_ready": ssh_ready,
             }
+
+            # Add volume info from metadata if available
+            metadata = self._load_pod_metadata(pod_id)
+            if metadata:
+                if "volume_id" in metadata:
+                    result["volume_id"] = metadata["volume_id"]
+                    result["volume_mount"] = metadata.get("volume_mount", "/workspace")
 
             logger.info(
                 f"Pod {pod_id} status: {status}, runtime: {runtime_minutes:.1f}min, "
@@ -762,16 +773,19 @@ class RunPodProvider(CloudProvider):
         # Should never reach here, but just in case
         raise last_exception if last_exception else RuntimeError("Retry failed")
 
-    def _save_pod_metadata(self, pod_id: str, pod_host_id: str) -> None:
+    def _save_pod_metadata(self, pod_id: str, metadata: Dict) -> None:
         """Save pod metadata to persistent storage.
 
-        Stores pod metadata (including podHostId) to ~/.autopod/pods.json
-        for SSH access. This is necessary because get_pod() doesn't return
-        the podHostId.
+        Stores pod metadata (including podHostId, volume info) to ~/.autopod/pods.json
+        for SSH access and volume tracking. This is necessary because get_pod() doesn't
+        return the podHostId or attached volume details.
 
         Args:
             pod_id: Pod identifier
-            pod_host_id: Pod host ID for SSH (e.g., "abc-123")
+            metadata: Dictionary with pod metadata:
+                - pod_host_id: Pod host ID for SSH (e.g., "abc-123")
+                - volume_id (optional): Network volume ID
+                - volume_mount (optional): Volume mount path
         """
         import json
         from pathlib import Path
@@ -791,11 +805,12 @@ class RunPodProvider(CloudProvider):
             except Exception as e:
                 logger.warning(f"Could not load pods metadata: {e}")
 
-        # Update with new pod
-        pods_data[pod_id] = {
-            "pod_host_id": pod_host_id,
+        # Update with new pod (merge with metadata)
+        pod_data = {
             "created_at": datetime.now().isoformat(),
         }
+        pod_data.update(metadata)  # Add all metadata fields
+        pods_data[pod_id] = pod_data
 
         # Save back to file
         try:
