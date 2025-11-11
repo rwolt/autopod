@@ -402,13 +402,63 @@ def ssh(pod_id, command):
             console.print(f"[cyan]Executing command on {pod_id}...[/cyan]")
             console.print(f"[dim]Command: {command}[/dim]\n")
 
+            # Check if SSH key is available in ssh-agent (for passphrase-protected keys)
+            import subprocess
+            from pathlib import Path
+
+            # Check if key has passphrase by attempting to read it
+            key_has_passphrase = False
+            try:
+                result = subprocess.run(
+                    ["ssh-keygen", "-y", "-P", "", "-f", ssh_key_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=2
+                )
+                key_has_passphrase = result.returncode != 0
+            except Exception:
+                # If we can't determine, assume it might have one
+                key_has_passphrase = True
+
+            # If key has passphrase, check if it's in ssh-agent
+            if key_has_passphrase:
+                try:
+                    result = subprocess.run(
+                        ["ssh-add", "-l"],
+                        capture_output=True,
+                        text=True,
+                        timeout=2
+                    )
+
+                    # Get the public key fingerprint to check if this specific key is loaded
+                    key_loaded = False
+                    if result.returncode == 0:
+                        # Try to get the fingerprint of our key
+                        fingerprint_result = subprocess.run(
+                            ["ssh-keygen", "-lf", ssh_key_path],
+                            capture_output=True,
+                            text=True,
+                            timeout=2
+                        )
+                        if fingerprint_result.returncode == 0:
+                            our_fingerprint = fingerprint_result.stdout.split()[1]
+                            key_loaded = our_fingerprint in result.stdout
+
+                    if not key_loaded:
+                        console.print("[yellow]⚠ SSH key has passphrase but isn't loaded in ssh-agent[/yellow]")
+                        console.print("[dim]To avoid passphrase prompts with '-c' flag, add your key:[/dim]")
+                        console.print(f"[dim]  ssh-add {ssh_key_path}[/dim]\n")
+
+                except Exception:
+                    # If we can't check, just continue (user will see auth errors if it fails)
+                    pass
+
             # Get SSH connection string
             conn_str = provider.get_ssh_connection_string(pod_id)
             from autopod.ssh import parse_ssh_connection_string
             ssh_info = parse_ssh_connection_string(conn_str)
 
             # Build SSH command
-            import subprocess
             cmd = ["ssh"]
             # Disable PTY allocation for command execution (RunPod proxy doesn't support it)
             cmd.append("-T")
