@@ -1,5 +1,7 @@
 # autopod
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A lightweight CLI controller for managing RunPod GPU instances with ease.
 
 ## Overview
@@ -206,6 +208,76 @@ autopod connect --dry-run
 - If no `--gpu` specified, uses first preference from config
 - Automatically falls back to second and third preferences if unavailable
 - Example preferences: RTX A40 → RTX A6000 → RTX A5000
+
+---
+
+### HTTP Port Exposure
+
+#### `autopod connect --expose-http`
+Expose ComfyUI HTTP port (8188) via RunPod's HTTP proxy
+
+By default, pods are not accessible from the internet. The `--expose-http` flag exposes port 8188 through RunPod's HTTPS proxy, making ComfyUI's web interface accessible from your browser.
+
+**Examples:**
+
+Create pod with HTTP proxy enabled:
+```bash
+autopod connect --expose-http
+```
+
+**Access URL format:**
+```
+https://[pod-id]-8188.proxy.runpod.net
+```
+
+Example:
+```bash
+autopod connect --expose-http --gpu "RTX A40"
+# After pod creation:
+# → Visit: https://abc123xyz-8188.proxy.runpod.net
+```
+
+**Security Considerations:**
+
+⚠️ **Important:** When using `--expose-http`, be aware of these security implications:
+
+- **No Authentication:** Anyone with the URL can access your ComfyUI instance
+- **Public Access:** The proxy URL is publicly accessible on the internet
+- **Traffic Inspection:** RunPod can technically inspect HTTPS traffic (though it's encrypted in transit)
+- **Exposed Workflows:** Your ComfyUI workflows and generated content are accessible to anyone with the URL
+
+**Recommended Security Practices:**
+
+1. **Terminate When Not in Use:**
+   ```bash
+   autopod kill [pod-id] -y    # Stop charges and remove access
+   ```
+
+2. **Use Stop for Breaks:**
+   ```bash
+   autopod stop [pod-id]       # Pauses pod, removes HTTP access
+   ```
+
+3. **Keep URLs Private:** Don't share the proxy URL in public places
+
+4. **Monitor Costs:** HTTP-exposed pods should be terminated promptly to avoid unnecessary charges
+
+**When to Use HTTP Proxy:**
+
+- ✅ Quick testing and development
+- ✅ Short-lived workflows (terminate immediately after)
+- ✅ Non-sensitive projects
+- ✅ When you need browser GUI access
+
+**When NOT to Use:**
+
+- ❌ Production workloads with sensitive data
+- ❌ Long-running pods left unattended
+- ❌ Processing confidential/private content
+- ❌ When security is a primary concern
+
+**Read More:**
+- [RunPod Port Exposure Documentation](https://docs.runpod.io/pods/configuration/expose-ports)
 
 ---
 
@@ -492,6 +564,26 @@ autopod kill abc-123 -y
 autopod connect --gpu "RTX 4090"
 ```
 
+### Using ComfyUI Web Interface
+
+Use HTTP proxy for browser-based ComfyUI access:
+
+```bash
+# Create pod with HTTP proxy enabled
+autopod connect --expose-http --gpu "RTX A40"
+
+# Note the proxy URL from the output:
+# → ComfyUI accessible at: https://abc123xyz-8188.proxy.runpod.net
+
+# Open the URL in your browser and use ComfyUI GUI
+# (Wait ~60 seconds for ComfyUI to fully start)
+
+# When done, terminate immediately to save costs
+autopod kill abc-123 -y
+```
+
+**Security Reminder:** HTTP proxy has no authentication. Anyone with the URL can access your ComfyUI instance. Terminate pods immediately when done to prevent unauthorized access and unnecessary charges.
+
 ---
 
 ## Configuration
@@ -754,7 +846,9 @@ python test_cli_integration.py
 
 ## License
 
-TBD
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+Copyright (c) 2025 Raymond Wolt
 
 ---
 

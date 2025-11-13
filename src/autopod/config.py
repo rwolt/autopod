@@ -51,7 +51,7 @@ def get_default_config() -> Dict:
             "runpod": {
                 "api_key": "",
                 "ssh_key_path": "",
-                "default_template": "runpod/comfyui:latest",
+                "default_template": "promptalchemist/comfyui-docker-new:latest",
                 "default_region": "NA-US",
                 "cloud_type": "secure",
                 "default_volume_id": "",  # Optional: Network volume ID to attach by default

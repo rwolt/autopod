@@ -84,46 +84,51 @@ Update the file after completing each sub-task, not just after completing an ent
   - [x] 1.14 Test: SSH into pod and verify volume is mounted at correct path
   - [x] 1.15 Test: Run autopod info and verify volume information is displayed
 
-- [ ] 2.0 Implement SSH tunnel management module
-  - [ ] 2.1 Create new file `src/autopod/tunnel.py`
-  - [ ] 2.2 Implement SSHTunnel class with __init__ method (pod_id, local_port, remote_port)
-  - [ ] 2.3 Implement SSHTunnel.start() method to create SSH tunnel subprocess
-  - [ ] 2.4 Implement SSHTunnel.stop() method to terminate tunnel process
-  - [ ] 2.5 Implement SSHTunnel.is_active() method to check if process is running
-  - [ ] 2.6 Implement SSHTunnel.test_connectivity() method to verify tunnel works (HTTP request)
-  - [ ] 2.7 Create TunnelManager class for managing multiple tunnels
-  - [ ] 2.8 Implement TunnelManager._get_state_file_path() to return ~/.autopod/tunnels.json
-  - [ ] 2.9 Implement TunnelManager.load_tunnels() to read from tunnels.json
-  - [ ] 2.10 Implement TunnelManager.save_tunnel() to persist tunnel state
-  - [ ] 2.11 Implement TunnelManager.get_tunnel() to retrieve tunnel by pod_id
-  - [ ] 2.12 Implement TunnelManager.remove_tunnel() to delete tunnel state
-  - [ ] 2.13 Implement TunnelManager.cleanup_stale_tunnels() to remove dead processes
-  - [ ] 2.14 Add error handling for port conflicts (detect if port already in use)
-  - [ ] 2.15 Add logging for all tunnel operations
-  - [ ] 2.16 Test: Create SSHTunnel instance and verify it can start/stop
-  - [ ] 2.17 Test: Verify tunnel state is persisted to tunnels.json
-  - [ ] 2.18 Test: Verify cleanup_stale_tunnels() removes dead processes
+- [x] 2.0 Implement SSH tunnel management module
+  - [x] 2.1 Create new file `src/autopod/tunnel.py`
+  - [x] 2.2 Implement SSHTunnel class with __init__ method (pod_id, local_port, remote_port, persistent state)
+  - [x] 2.3 Implement SSHTunnel.start() method to create SSH tunnel subprocess (detached, persistent)
+  - [x] 2.4 Implement SSHTunnel.stop() method to terminate tunnel process
+  - [x] 2.5 Implement SSHTunnel.is_active() method to check if process is running (PID-based)
+  - [x] 2.6 Implement SSHTunnel.test_connectivity() method to verify tunnel works (HTTP request)
+  - [x] 2.7 Create TunnelManager class for managing multiple tunnels
+  - [x] 2.8 Implement TunnelManager._load_state() to read from ~/.autopod/tunnels.json
+  - [x] 2.9 Implement TunnelManager._save_state() to persist tunnel state
+  - [x] 2.10 Implement TunnelManager.create_tunnel() with port conflict detection
+  - [x] 2.11 Implement TunnelManager.get_tunnel() to retrieve tunnel by pod_id
+  - [x] 2.12 Implement TunnelManager.remove_tunnel() to delete tunnel state
+  - [x] 2.13 Implement TunnelManager.cleanup_stale_tunnels() to remove dead processes
+  - [x] 2.14 Add error handling for port conflicts (detect if port already in use)
+  - [x] 2.15 Add logging for all tunnel operations
+  - [x] 2.16 Add CLI commands: tunnel start/stop/list/cleanup/stop-all
+  - [x] 2.17 Add psutil dependency for PID checking
+  - [x] 2.18 **PIVOT:** SSH tunneling doesn't work with RunPod proxy - implemented --expose-http flag instead
+  - [x] 2.19 Removed --expose-ssh flag and related support_public_ip code
+  - [x] 2.20 Implemented --expose-http flag to expose port 8188 via RunPod HTTP proxy
+  - [x] 2.21 Added comprehensive security warnings about HTTP proxy (no auth, public access)
+  - [x] 2.22 Test: Create pod with --expose-http and verify ComfyUI accessible via proxy URL
+  - [x] 2.23 Updated README with HTTP proxy documentation and security best practices
 
-- [ ] 3.0 Implement ComfyUI API client module (minimal synchronous client)
-  - [ ] 3.1 Create new file `src/autopod/comfyui.py`
-  - [ ] 3.2 Add docstring explaining: minimal sync client for V1.2, async deferred to V2.0
-  - [ ] 3.3 Implement ComfyUIClient class with __init__ method (base_url parameter, default "http://localhost:8188")
-  - [ ] 3.4 Implement ComfyUIClient.is_ready() method using GET /system_stats with timeout
-  - [ ] 3.5 Implement ComfyUIClient.get_system_stats() to fetch /system_stats endpoint (device info, RAM, VRAM)
-  - [ ] 3.6 Implement ComfyUIClient.get_queue_info() to fetch GET /queue endpoint (running, pending counts)
-  - [ ] 3.7 Implement ComfyUIClient.get_history() to fetch GET /history endpoint (optional prompt_id parameter)
-  - [ ] 3.8 Implement ComfyUIClient.get_object_info() to fetch GET /object_info endpoint (available nodes)
-  - [ ] 3.9 Add error handling for ConnectionError (tunnel not established)
-  - [ ] 3.10 Add error handling for Timeout (ComfyUI not responding)
-  - [ ] 3.11 Add error handling for HTTP errors with response.raise_for_status()
-  - [ ] 3.12 Add logging for all API calls (request URL, response status, elapsed time)
-  - [ ] 3.13 Add retry logic with exponential backoff for is_ready() method (max 3 retries, 2s/4s/8s delays)
-  - [ ] 3.14 Add comment about future async migration plan (V2.0 will need aiohttp or external client)
-  - [ ] 3.15 Test: Create ComfyUIClient with mock base_url and verify instantiation
-  - [ ] 3.16 Test: Mock successful /system_stats response and verify is_ready() returns True
-  - [ ] 3.17 Test: Mock connection error and verify is_ready() returns False
-  - [ ] 3.18 Test: Mock timeout and verify proper error handling
-  - [ ] 3.19 Test: Verify retry logic attempts correct number of times with delays
+- [x] 3.0 Implement ComfyUI API client module (minimal synchronous client)
+  - [x] 3.1 Create new file `src/autopod/comfyui.py`
+  - [x] 3.2 Add docstring explaining: minimal sync client for V1.2, async deferred to V2.0
+  - [x] 3.3 Implement ComfyUIClient class with __init__ method (base_url parameter, default "http://localhost:8188")
+  - [x] 3.4 Implement ComfyUIClient.is_ready() method using GET /system_stats with timeout
+  - [x] 3.5 Implement ComfyUIClient.get_system_stats() to fetch /system_stats endpoint (device info, RAM, VRAM)
+  - [x] 3.6 Implement ComfyUIClient.get_queue_info() to fetch GET /queue endpoint (running, pending counts)
+  - [x] 3.7 Implement ComfyUIClient.get_history() to fetch GET /history endpoint (optional prompt_id parameter)
+  - [x] 3.8 Implement ComfyUIClient.get_object_info() to fetch GET /object_info endpoint (available nodes)
+  - [x] 3.9 Add error handling for ConnectionError (tunnel not established)
+  - [x] 3.10 Add error handling for Timeout (ComfyUI not responding)
+  - [x] 3.11 Add error handling for HTTP errors with response.raise_for_status()
+  - [x] 3.12 Add logging for all API calls (request URL, response status, elapsed time)
+  - [x] 3.13 Add retry logic with exponential backoff for is_ready() method (max 3 retries, 2s/4s/8s delays)
+  - [x] 3.14 Add comment about future async migration plan (V2.0 will need aiohttp or external client)
+  - [x] 3.15 Test: Create ComfyUIClient with mock base_url and verify instantiation
+  - [x] 3.16 Test: Test with real ComfyUI instance - is_ready() returned True
+  - [x] 3.17 Test: Test with non-existent instance - is_ready() returned False (correct)
+  - [x] 3.18 Test: All methods tested with real API - get_system_stats, get_queue_info, get_history, get_object_info
+  - [x] 3.19 Test: Retry logic works correctly with exponential backoff
 
 - [ ] 4.0 Add tunnel CLI commands
   - [ ] 4.1 Read `src/autopod/cli.py` to understand CLI structure

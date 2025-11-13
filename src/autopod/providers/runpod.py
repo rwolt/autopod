@@ -314,6 +314,7 @@ class RunPodProvider(CloudProvider):
                 - cloud_type (str): "SECURE" or "ALL" (default: "SECURE")
                 - disk_size_gb (int): Container disk size (default: 50)
                 - env_vars (Dict, optional): Environment variables
+                - ports (str, optional): Ports to expose (e.g., "8188/http")
 
         Returns:
             Pod ID as string
@@ -322,10 +323,17 @@ class RunPodProvider(CloudProvider):
             RuntimeError: If pod creation fails
 
         Example:
+            # Basic pod
             pod_id = provider.create_pod({
                 "gpu_type": "RTX A40",
                 "gpu_count": 1,
                 "template": "runpod/comfyui:latest"
+            })
+
+            # Pod with HTTP access enabled
+            pod_id = provider.create_pod({
+                "gpu_type": "RTX A40",
+                "ports": "8188/http"
             })
         """
         try:
@@ -396,6 +404,16 @@ class RunPodProvider(CloudProvider):
 
             if datacenter_id:
                 pod_params["data_center_id"] = datacenter_id
+
+            # Add port exposure if specified
+            # HTTP ports use RunPod's proxy (no public IP needed)
+            if "ports" in config:
+                ports = config["ports"]
+                if isinstance(ports, list):
+                    # Convert list to RunPod format: "8188/http,22/tcp"
+                    ports = ",".join(ports)
+                pod_params["ports"] = ports
+                logger.info(f"Exposing ports: {ports}")
 
             logger.debug(f"Pod creation params: {pod_params}")
 

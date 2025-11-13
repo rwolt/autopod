@@ -7,6 +7,7 @@ including creation, monitoring, SSH access, and lifecycle management.
 import sys
 import signal
 import logging
+import time
 from typing import Optional
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from autopod.config import (
 from autopod.providers import RunPodProvider
 from autopod.pod_manager import PodManager
 from autopod.logging import setup_logging
+from autopod.tunnel import TunnelManager, SSHTunnel
 
 console = Console()
 logger = setup_logging()
@@ -164,9 +166,10 @@ def config_init():
 @click.option("--template", type=str, help="Docker template (overrides config default)")
 @click.option("--cloud-type", type=click.Choice(["SECURE", "COMMUNITY", "ALL"], case_sensitive=False),
               help="Cloud type (default: SECURE)")
+@click.option("--expose-http", is_flag=True, help="Expose HTTP port 8188 for browser access (see security warning)")
 @click.option("--dry-run", is_flag=True, help="Show what would be created without creating")
 @click.option("--interactive", is_flag=True, help="Interactive mode with prompts")
-def connect(gpu, gpu_count, disk_size, datacenter, volume_id, volume_mount, template, cloud_type, dry_run, interactive):
+def connect(gpu, gpu_count, disk_size, datacenter, volume_id, volume_mount, template, cloud_type, expose_http, dry_run, interactive):
     """Create and connect to a new pod.
 
     By default, uses GPU preferences from config with smart fallback.
@@ -174,6 +177,7 @@ def connect(gpu, gpu_count, disk_size, datacenter, volume_id, volume_mount, temp
     Examples:
         autopod connect                      # Use config preferences
         autopod connect --gpu "RTX A40"      # Specific GPU
+        autopod connect --expose-http        # Enable browser access via HTTP proxy
         autopod connect --dry-run            # Preview without creating
         autopod connect --interactive        # Interactive prompts
     """
@@ -230,6 +234,10 @@ def connect(gpu, gpu_count, disk_size, datacenter, volume_id, volume_mount, temp
             pod_config["volume_id"] = volume_id_value
             pod_config["volume_mount"] = volume_mount_value
 
+        # Add HTTP port exposure if requested
+        if expose_http:
+            pod_config["ports"] = "8188/http"
+
         # Show configuration
         console.print("\n[bold cyan]Pod Configuration:[/bold cyan]")
         console.print(f"  GPU:        {pod_config['gpu_count']}x {pod_config['gpu_type']}")
@@ -240,6 +248,18 @@ def connect(gpu, gpu_count, disk_size, datacenter, volume_id, volume_mount, temp
             console.print(f"  Datacenter: {datacenter_value}")
         if volume_id_value:
             console.print(f"  Volume:     {volume_id_value} → {volume_mount_value}")
+        if expose_http:
+            console.print(f"  HTTP:       [yellow]Port 8188 exposed (HTTP proxy)[/yellow]")
+
+        # Show security warning if exposing HTTP
+        if expose_http:
+            console.print("\n[bold yellow]⚠️  Security Warning:[/bold yellow]")
+            console.print("[yellow]ComfyUI will be accessible via RunPod HTTP proxy.[/yellow]")
+            console.print("[dim]• Anyone with the URL can access your ComfyUI (no authentication)[/dim]")
+            console.print("[dim]• URL format: https://[pod-id]-8188.proxy.runpod.net[/dim]")
+            console.print("[dim]• Traffic is HTTPS encrypted but RunPod can inspect it[/dim]")
+            console.print("[dim]• Recommended: Terminate pod when not in use[/dim]")
+            console.print("[dim]• Read more: https://docs.runpod.io/pods/configuration/expose-ports[/dim]\n")
 
         if dry_run:
             console.print("\n[yellow]DRY RUN - No pod will be created[/yellow]")
@@ -294,6 +314,13 @@ def connect(gpu, gpu_count, disk_size, datacenter, volume_id, volume_mount, temp
                     raise
 
         console.print(f"\n[green]✓ Pod created successfully: {pod_id}[/green]")
+
+        # Show HTTP proxy URL if port 8188 is exposed
+        if expose_http:
+            http_url = f"https://{pod_id}-8188.proxy.runpod.net"
+            console.print(f"\n[bold]🌐 ComfyUI Access:[/bold]")
+            console.print(f"  [cyan]{http_url}[/cyan]")
+            console.print(f"  [dim](Wait ~30s for ComfyUI to start)[/dim]")
 
         # Show next steps
         console.print("\n[bold]Next steps:[/bold]")
@@ -663,6 +690,297 @@ def rm_alias(pod_id, yes):
     if yes:
         args.append("--yes")
     runner.invoke(kill, args)
+
+
+# ============================================================================
+# Tunnel Management Commands
+# ============================================================================
+
+
+@cli.group()
+def tunnel():
+    """Manage SSH tunnels to pods."""
+    pass
+
+
+@tunnel.command("start")
+@click.argument("pod_id")
+@click.option("--local-port", type=int, default=8188, help="Local port to bind (default: 8188)")
+@click.option("--remote-port", type=int, default=8188, help="Remote port to forward (default: 8188)")
+@click.option("--ssh-key", type=str, help="Path to SSH private key")
+def tunnel_start(pod_id, local_port, remote_port, ssh_key):
+    """Start an SSH tunnel to a pod.
+
+    Creates a persistent SSH tunnel that forwards a local port to a remote
+    port on the pod. The tunnel continues running even after autopod exits.
+
+    Example:
+        autopod tunnel start pod-abc --local-port 8188 --remote-port 8188
+
+    Then access ComfyUI at: http://localhost:8188
+    """
+    try:
+        # Load config
+        config = load_config()
+
+        # Initialize provider and manager
+        provider = RunPodProvider(
+            api_key=config["providers"]["runpod"]["api_key"]
+        )
+        manager = PodManager(provider)
+
+        console.print(f"\n[bold]Starting SSH tunnel for pod {pod_id}[/bold]")
+        console.print(f"  Local port:  {local_port}")
+        console.print(f"  Remote port: {remote_port}\n")
+
+        # Get pod status to get SSH connection string
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console
+        ) as progress:
+            progress.add_task("Getting pod info...", total=None)
+
+            pod = manager.get_pod_info(pod_id)
+
+            if not pod:
+                console.print(f"[red]✗ Pod {pod_id} not found[/red]")
+                sys.exit(1)
+
+            if not pod.get("ssh_ready"):
+                console.print(f"[red]✗ Pod {pod_id} SSH is not ready[/red]")
+                console.print("[dim]Wait for pod to finish starting, then try again[/dim]")
+                sys.exit(1)
+
+        # Get SSH connection string using provider method
+        try:
+            ssh_connection_string = provider.get_ssh_connection_string(pod_id)
+        except RuntimeError as e:
+            console.print(f"[red]✗ {e}[/red]")
+            sys.exit(1)
+
+        console.print(f"SSH connection: {ssh_connection_string}\n")
+
+        # Use SSH key from config if not specified
+        if not ssh_key:
+            ssh_key = config["providers"]["runpod"].get("ssh_key_path")
+
+        # Create tunnel
+        tunnel_manager = TunnelManager()
+
+        try:
+            tunnel_obj = tunnel_manager.create_tunnel(
+                pod_id=pod_id,
+                ssh_connection_string=ssh_connection_string,
+                local_port=local_port,
+                remote_port=remote_port,
+                ssh_key_path=ssh_key
+            )
+        except RuntimeError as e:
+            console.print(f"[red]✗ {e}[/red]")
+            sys.exit(1)
+
+        # Start tunnel
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console
+        ) as progress:
+            progress.add_task("Establishing SSH tunnel...", total=None)
+
+            if not tunnel_obj.start():
+                console.print("[red]✗ Failed to start SSH tunnel[/red]")
+                console.print("[dim]Check logs for details[/dim]")
+                sys.exit(1)
+
+        # Save state
+        tunnel_manager._save_state()
+
+        # Test connectivity
+        console.print("\n[yellow]Testing tunnel connectivity...[/yellow]")
+
+        time.sleep(1)  # Give tunnel a moment
+
+        if tunnel_obj.test_connectivity(timeout=10):
+            console.print("[green]✓ Tunnel is working![/green]")
+        else:
+            console.print("[yellow]⚠️  Tunnel started but connectivity test failed[/yellow]")
+            console.print("[dim]The remote service might not be running yet[/dim]")
+
+        # Show success message
+        console.print(f"\n[green]✓ SSH tunnel started successfully[/green]")
+        console.print(f"\n[bold]Access your service at:[/bold] http://localhost:{local_port}")
+        console.print(f"[dim]Tunnel PID: {tunnel_obj.pid}[/dim]")
+        console.print(f"\n[dim]The tunnel will persist even after you close this terminal.[/dim]")
+        console.print(f"[dim]Use 'autopod tunnel stop {pod_id}' to stop the tunnel.[/dim]\n")
+
+    except Exception as e:
+        console.print(f"\n[red]✗ Error: {e}[/red]")
+        logger.exception("Failed to start tunnel")
+        sys.exit(1)
+
+
+@tunnel.command("stop")
+@click.argument("pod_id")
+def tunnel_stop(pod_id):
+    """Stop an SSH tunnel.
+
+    Terminates the SSH tunnel process for the specified pod.
+
+    Example:
+        autopod tunnel stop pod-abc
+    """
+    try:
+        tunnel_manager = TunnelManager()
+        tunnel_obj = tunnel_manager.get_tunnel(pod_id)
+
+        if not tunnel_obj:
+            console.print(f"[yellow]⚠️  No tunnel found for pod {pod_id}[/yellow]")
+            sys.exit(1)
+
+        if not tunnel_obj.is_active():
+            console.print(f"[yellow]⚠️  Tunnel for pod {pod_id} is not running[/yellow]")
+            tunnel_manager.remove_tunnel(pod_id)
+            sys.exit(0)
+
+        console.print(f"\n[bold]Stopping SSH tunnel for pod {pod_id}[/bold]")
+        console.print(f"  PID: {tunnel_obj.pid}")
+        console.print(f"  Port: {tunnel_obj.local_port}\n")
+
+        if tunnel_obj.stop():
+            tunnel_manager.remove_tunnel(pod_id)
+            console.print("[green]✓ Tunnel stopped successfully[/green]\n")
+        else:
+            console.print("[red]✗ Failed to stop tunnel[/red]")
+            sys.exit(1)
+
+    except Exception as e:
+        console.print(f"\n[red]✗ Error: {e}[/red]")
+        logger.exception("Failed to stop tunnel")
+        sys.exit(1)
+
+
+@tunnel.command("list")
+def tunnel_list():
+    """List all SSH tunnels.
+
+    Shows active and stale tunnels with their status.
+
+    Example:
+        autopod tunnel list
+    """
+    try:
+        tunnel_manager = TunnelManager()
+        tunnels = tunnel_manager.list_tunnels()
+
+        if not tunnels:
+            console.print("\n[dim]No tunnels found[/dim]\n")
+            return
+
+        # Create table
+        table = Table(title="SSH Tunnels", show_header=True, header_style="bold cyan")
+        table.add_column("Pod ID", style="cyan")
+        table.add_column("Local Port", justify="right")
+        table.add_column("Remote Port", justify="right")
+        table.add_column("Status")
+        table.add_column("PID", justify="right")
+        table.add_column("Connection")
+
+        for tunnel_obj in tunnels:
+            status = tunnel_obj.get_status()
+
+            if status["active"]:
+                status_str = "[green]●[/green] Active"
+            else:
+                status_str = "[red]●[/red] Dead"
+
+            table.add_row(
+                status["pod_id"],
+                str(status["local_port"]),
+                str(status["remote_port"]),
+                status_str,
+                str(status["pid"]) if status["pid"] else "-",
+                status["ssh_connection"]
+            )
+
+        console.print()
+        console.print(table)
+        console.print()
+
+        # Show cleanup suggestion if there are dead tunnels
+        dead_count = sum(1 for t in tunnels if not t.is_active())
+        if dead_count > 0:
+            console.print(f"[dim]Tip: Run 'autopod tunnel cleanup' to remove {dead_count} dead tunnel(s)[/dim]\n")
+
+    except Exception as e:
+        console.print(f"\n[red]✗ Error: {e}[/red]")
+        logger.exception("Failed to list tunnels")
+        sys.exit(1)
+
+
+@tunnel.command("cleanup")
+def tunnel_cleanup():
+    """Clean up stale/dead tunnels.
+
+    Removes tunnels for SSH processes that are no longer running.
+
+    Example:
+        autopod tunnel cleanup
+    """
+    try:
+        console.print("\n[bold]Cleaning up stale tunnels...[/bold]\n")
+
+        tunnel_manager = TunnelManager()
+        count = tunnel_manager.cleanup_stale_tunnels()
+
+        if count > 0:
+            console.print(f"[green]✓ Removed {count} stale tunnel(s)[/green]\n")
+        else:
+            console.print("[dim]No stale tunnels found[/dim]\n")
+
+    except Exception as e:
+        console.print(f"\n[red]✗ Error: {e}[/red]")
+        logger.exception("Failed to cleanup tunnels")
+        sys.exit(1)
+
+
+@tunnel.command("stop-all")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+def tunnel_stop_all(yes):
+    """Stop all active tunnels.
+
+    Terminates all SSH tunnel processes.
+
+    Example:
+        autopod tunnel stop-all --yes
+    """
+    try:
+        tunnel_manager = TunnelManager()
+        tunnels = tunnel_manager.list_tunnels()
+        active_count = sum(1 for t in tunnels if t.is_active())
+
+        if active_count == 0:
+            console.print("\n[dim]No active tunnels to stop[/dim]\n")
+            return
+
+        # Confirm
+        if not yes:
+            console.print(f"\n[yellow]⚠️  This will stop {active_count} active tunnel(s)[/yellow]")
+            confirm = click.confirm("Are you sure?", default=False)
+            if not confirm:
+                console.print("[dim]Cancelled[/dim]\n")
+                return
+
+        console.print(f"\n[bold]Stopping {active_count} tunnel(s)...[/bold]\n")
+
+        stopped = tunnel_manager.stop_all_tunnels()
+
+        console.print(f"[green]✓ Stopped {stopped} tunnel(s)[/green]\n")
+
+    except Exception as e:
+        console.print(f"\n[red]✗ Error: {e}[/red]")
+        logger.exception("Failed to stop all tunnels")
+        sys.exit(1)
 
 
 def main():
