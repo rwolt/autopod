@@ -6,23 +6,26 @@ V1.2 adds ComfyUI integration to autopod, enabling users to interact with ComfyU
 
 **Problem Statement:**
 V1.1 provides pod lifecycle management but doesn't integrate with ComfyUI, the primary workload for autopod. Users need to:
-1. Attach network volumes (for models/checkpoints) during pod creation
-2. Access ComfyUI GUI and API through SSH tunnels
-3. Verify ComfyUI is running and ready
-4. Perform basic API operations (check status, list workflows)
+1. Attach network volumes (for models/checkpoints) during pod creation ✅ (DONE - Task 1.0)
+2. Access ComfyUI GUI and API through SSH tunnels ✅ (DONE - Task 2.0)
+3. **Know when SSH is ready** (visual status: 🟠 Starting → 🟢 Ready)
+4. **Know when ComfyUI is ready** (visual status: 🟠 Loading → 🟢 Ready)
+5. **Process local workflows via ComfyUI API** (submit jobs, monitor progress)
+6. Verify ComfyUI is running and get system info ✅ (DONE - Task 3.0)
 
 **Goal:**
-Enable users to create pods with network volumes attached, establish SSH tunnels to ComfyUI, and interact with the ComfyUI API programmatically.
+Enable users to create pods with network volumes, establish secure SSH tunnels to ComfyUI, see real-time readiness status, and process workflows from their local machine with live progress feedback.
 
 ---
 
 ## Goals
 
-1. **Network Volume Integration**: Attach RunPod network volumes during pod creation
-2. **SSH Tunnel Management**: Create and maintain tunnels to ComfyUI (localhost:8188 → pod:8188)
-3. **ComfyUI Connectivity**: Verify ComfyUI is accessible and responding
-4. **Basic API Operations**: Check ComfyUI status, list available endpoints
-5. **Foundation for V1.3+**: Establish patterns for workflow submission (deferred to later versions)
+1. ✅ **Network Volume Integration**: Attach RunPod network volumes during pod creation (DONE - Task 1.0)
+2. ✅ **SSH Tunnel Management**: Create and maintain tunnels to ComfyUI (localhost:8188 → pod:8188) (DONE - Task 2.0)
+3. ✅ **ComfyUI API Client**: Verify ComfyUI is accessible and get system info (DONE - Task 3.0)
+4. 🔲 **Visual Status Indicators**: Real-time feedback for SSH and ComfyUI readiness (NEW - HIGH PRIORITY)
+5. 🔲 **Local Workflow Processing**: Submit workflows from local machine, monitor progress (NEW - HIGH PRIORITY)
+6. 🔲 **Foundation for V2.0**: Patterns established for WebSocket monitoring and parallel jobs
 
 ---
 
@@ -65,7 +68,36 @@ Enable users to create pods with network volumes attached, establish SSH tunnels
 - Returns exit code 0 if ready, 1 if not ready
 - Works with auto-selected pod (single pod scenario)
 
-### US-4: ComfyUI API Info
+### US-4: Visual Readiness Indicators (NEW - HIGH PRIORITY)
+**As a** user waiting for my pod to be ready
+**I want** clear visual feedback on SSH and ComfyUI status
+**So that** I know exactly when I can start working
+
+**Acceptance Criteria:**
+- Status display shows: `SSH: 🟠 Starting...` → `SSH: 🟢 Ready`
+- Status display shows: `ComfyUI: 🟠 Loading...` → `ComfyUI: 🟢 Ready`
+- Displays elapsed time: "ComfyUI: 🟠 Loading... (45s elapsed)"
+- Both checks run in parallel (don't wait for SSH to check ComfyUI)
+- Clear messaging: "Pod ready in 90s" when complete
+- Automatic with `autopod connect --wait` flag
+- Works with SSH tunnels (not HTTP proxy)
+
+### US-5: Process Local Workflows (NEW - HIGH PRIORITY)
+**As a** user with ComfyUI workflows on my local machine
+**I want** to submit them to my pod and monitor progress
+**So that** I can render without manually using the GUI
+
+**Acceptance Criteria:**
+- New command: `autopod process workflow.json --input image.png`
+- Uploads input files automatically (images, audio, etc.)
+- Submits workflow via ComfyUI API (through SSH tunnel)
+- Shows progress: `Processing: [████░░░░] 45% (polling every 5s)`
+- Downloads outputs when complete
+- Works with SSH tunnel (localhost:8188)
+- Handles errors gracefully (VRAM exceeded, missing nodes, etc.)
+- Simple polling for V1.2 (WebSocket monitoring in V2.0)
+
+### US-6: ComfyUI API Info
 **As a** user exploring ComfyUI capabilities
 **I want** to see basic API information
 **So that** I understand what operations are available
@@ -415,20 +447,32 @@ def ensure_tunnel(pod_id, provider, console):
 ## Success Metrics
 
 ### V1.2 is successful when:
-1. ✅ Can create pod with network volume attached
-2. ✅ Can establish SSH tunnel to ComfyUI (localhost:8188)
-3. ✅ Can verify ComfyUI is ready via `autopod comfy status`
-4. ✅ Can view ComfyUI info via `autopod comfy info`
-5. ✅ Can open ComfyUI GUI at http://localhost:8188 in browser
-6. ✅ Tunnels are automatically managed (created on demand, cleaned up on exit)
-7. ✅ All V1.1 functionality still works
+1. ✅ Can create pod with network volume attached (DONE - Task 1.0)
+2. ✅ Can establish SSH tunnel to ComfyUI (localhost:8188) (DONE - Task 2.0)
+3. ✅ Can verify ComfyUI is ready via `autopod comfy status` (DONE - Task 3.0)
+4. ✅ Can view ComfyUI info via `autopod comfy info` (DONE - Task 3.0)
+5. ✅ Can open ComfyUI GUI at http://localhost:8188 in browser (DONE - Task 2.0 + 3.0)
+6. ✅ Tunnels are automatically managed (created on demand, cleaned up) (DONE - Task 2.0)
+7. 🔲 Visual status indicators show SSH and ComfyUI readiness (NEW - Task 4.0)
+8. 🔲 Can submit local workflow and monitor progress (NEW - Task 5.0)
+9. 🔲 Can upload files and download outputs via API (NEW - Task 5.0)
+10. ✅ All V1.1 functionality still works (DONE - regression tests passed)
 
 ### Validation:
-- Manual test: Create pod with volume → tunnel → access GUI
-- Manual test: `autopod comfy status` works immediately after creation
-- Manual test: `autopod comfy info` shows correct information
-- Manual test: Tunnel survives pod stop/start cycle
-- Manual test: Multiple tunnel operations don't create duplicate tunnels
+**Completed Tests:**
+- ✅ Manual test: Create pod with volume → verified volume mounted
+- ✅ Manual test: SSH tunnel creation and connectivity
+- ✅ Manual test: `autopod comfy status` works with real API
+- ✅ Manual test: `autopod comfy info` shows correct information
+- ✅ Integration test: All API methods work (is_ready, get_system_stats, get_queue_info, get_history, get_object_info)
+- ✅ Unit tests: 21/21 tests passed for Tasks 2.0-4.0
+
+**Remaining Tests:**
+- 🔲 Manual test: `autopod connect --wait` shows status indicators
+- 🔲 Manual test: Status correctly shows 🟠 → 🟢 transition
+- 🔲 Manual test: `autopod process workflow.json` submits and completes job
+- 🔲 Manual test: Progress updates correctly during processing
+- 🔲 Manual test: File upload and download via API
 
 ---
 

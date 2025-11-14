@@ -8,11 +8,20 @@ A lightweight CLI controller for managing RunPod GPU instances with ease.
 
 autopod automates the process of creating, managing, and accessing RunPod GPU pods through an intuitive command-line interface. It provides smart GPU selection with automatic fallback, SSH access, and comprehensive pod lifecycle management - all designed to help you save money on compute costs.
 
-**Status:** Version 1.1 - Production Ready
+**Status:** Version 1.2 - Production Ready
 
 ## Features
 
-### V1.1 (Current)
+### V1.2 (Current) - ComfyUI Integration
+- **SSH Tunnel Management** - Automatic SSH tunnels for secure ComfyUI access
+- **ComfyUI API Client** - Query ComfyUI status, system info, and queue via API
+- **Network Volume Support** - Attach RunPod network volumes for persistent model storage
+- **Tunnel Auto-Recovery** - Automatic tunnel health checks and recreation
+- **ComfyUI Commands** - `autopod comfy status` and `autopod comfy info`
+- **Localhost Access** - Access ComfyUI GUI at http://localhost:8188 via SSH tunnel
+- **All V1.1 Features** - Full backward compatibility with pod lifecycle management
+
+### V1.1 Features
 - **Smart Pod Creation** - Automatic GPU selection with fallback preferences
 - **Datacenter Selection** - Specify datacenter via `--datacenter` flag (e.g., CA-MTL-1)
 - **Optimized Defaults** - 50GB container disk by default (perfect for ComfyUI)
@@ -174,6 +183,8 @@ Create and connect to a new pod
 - `--datacenter <ID>` - Datacenter region (e.g., 'CA-MTL-1', 'US-GA-1')
 - `--template <NAME>` - Docker template (overrides config default)
 - `--cloud-type <TYPE>` - SECURE, COMMUNITY, or ALL (default: SECURE)
+- `--volume-id <ID>` - Network volume ID to attach (for persistent storage)
+- `--volume-mount <PATH>` - Mount path for network volume (default: /workspace)
 - `--dry-run` - Show what would be created without creating
 - `--interactive` - Interactive mode with prompts (future)
 
@@ -197,6 +208,11 @@ autopod connect --gpu "RTX A40" --gpu-count 2 --disk-size 100
 Create pod in specific datacenter:
 ```bash
 autopod connect --datacenter CA-MTL-1
+```
+
+Create pod with network volume (for persistent model storage):
+```bash
+autopod connect --volume-id abc123xyz --volume-mount /workspace
 ```
 
 Preview without creating:
@@ -481,6 +497,169 @@ autopod rm abc-123           # Docker-like alias
 
 ---
 
+### SSH Tunnels
+
+#### `autopod tunnel start [POD_ID]`
+Create an SSH tunnel to access services running on a pod
+
+**Arguments:**
+- `[POD_ID]` - Optional pod ID (auto-selects if only one pod exists)
+
+**Options:**
+- `--local-port <PORT>` - Local port (default: 8188)
+- `--remote-port <PORT>` - Remote port on pod (default: 8188)
+
+**Examples:**
+
+Create tunnel to ComfyUI (auto-select pod):
+```bash
+autopod tunnel start
+```
+
+Create tunnel with specific ports:
+```bash
+autopod tunnel start abc-123 --local-port 8188 --remote-port 8188
+```
+
+Access ComfyUI in browser after tunnel created:
+```bash
+open http://localhost:8188
+```
+
+#### `autopod tunnel stop [POD_ID]`
+Stop an SSH tunnel for a pod
+
+**Examples:**
+```bash
+autopod tunnel stop abc-123
+autopod tunnel stop    # Auto-select
+```
+
+#### `autopod tunnel list`
+List all active SSH tunnels
+
+**Example:**
+```bash
+autopod tunnel list
+```
+
+**Output:**
+```
+┏━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┓
+┃ Pod ID     ┃ Status    ┃ Port      ┃ PID       ┃
+┡━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━┩
+│ abc-123    │ Active    │ 8188      │ 12345     │
+└────────────┴───────────┴───────────┴───────────┘
+```
+
+#### `autopod tunnel cleanup`
+Remove dead/stale tunnels from tracking
+
+**Example:**
+```bash
+autopod tunnel cleanup
+```
+
+#### `autopod tunnel stop-all`
+Stop all active SSH tunnels
+
+**Example:**
+```bash
+autopod tunnel stop-all
+```
+
+---
+
+### ComfyUI Commands
+
+#### `autopod comfy status [POD_ID]`
+Check if ComfyUI is ready and responding
+
+**Arguments:**
+- `[POD_ID]` - Optional pod ID (auto-selects if only one pod exists)
+
+**Options:**
+- `--port <PORT>` - Local tunnel port (default: 8188)
+- `--no-tunnel` - Skip automatic tunnel creation
+
+**Examples:**
+
+Check ComfyUI status (auto-creates tunnel):
+```bash
+autopod comfy status
+```
+
+Check specific pod:
+```bash
+autopod comfy status abc-123
+```
+
+**Output (ready):**
+```
+╭─────────── ComfyUI Status: READY ───────────╮
+│ Pod ID:       abc-123                       │
+│ Tunnel:       localhost:8188 (Active)      │
+│ ComfyUI:      Ready ✓                       │
+│ Access:       http://localhost:8188         │
+╰─────────────────────────────────────────────╯
+```
+
+**Output (not ready):**
+```
+╭────────── ComfyUI Status: NOT READY ────────╮
+│ Pod ID:       abc-123                       │
+│ Tunnel:       localhost:8188 (Active)      │
+│ ComfyUI:      Not responding ✗              │
+│ Wait Time:    ~60 seconds after pod start   │
+╰─────────────────────────────────────────────╯
+```
+
+#### `autopod comfy info [POD_ID]`
+Show detailed ComfyUI system information
+
+**Arguments:**
+- `[POD_ID]` - Optional pod ID (auto-selects if only one pod exists)
+
+**Options:**
+- `--port <PORT>` - Local tunnel port (default: 8188)
+- `--no-tunnel` - Skip automatic tunnel creation
+
+**Examples:**
+
+Get ComfyUI info (auto-creates tunnel):
+```bash
+autopod comfy info
+```
+
+Get info for specific pod:
+```bash
+autopod comfy info abc-123
+```
+
+**Output:**
+```
+╭──────────── ComfyUI Information ────────────╮
+│ Pod ID:       abc-123                       │
+│ Status:       Ready ✓                       │
+│                                             │
+│ System:                                     │
+│   Python:     3.10.12                       │
+│   RAM:        62.8 GB                       │
+│                                             │
+│ GPU 0:                                      │
+│   Name:       NVIDIA RTX A40                │
+│   VRAM:       45.6 GB                       │
+│                                             │
+│ Queue:                                      │
+│   Running:    0 jobs                        │
+│   Pending:    0 jobs                        │
+│                                             │
+│ Access:       http://localhost:8188         │
+╰─────────────────────────────────────────────╯
+```
+
+---
+
 ## Common Workflows
 
 ### Quick GPU Session
@@ -584,6 +763,40 @@ autopod kill abc-123 -y
 
 **Security Reminder:** HTTP proxy has no authentication. Anyone with the URL can access your ComfyUI instance. Terminate pods immediately when done to prevent unauthorized access and unnecessary charges.
 
+### Accessing ComfyUI Securely via SSH Tunnel (Recommended)
+
+For better security, use SSH tunnels instead of HTTP proxy:
+
+```bash
+# Create pod WITHOUT --expose-http (more secure)
+autopod connect --gpu "RTX A40"
+
+# Create SSH tunnel (or let comfy commands auto-create it)
+autopod tunnel start
+
+# Wait for ComfyUI to start (~60 seconds)
+autopod comfy status
+
+# Open ComfyUI in browser at localhost:8188
+open http://localhost:8188
+
+# Work with ComfyUI GUI securely (no public URL!)
+
+# Check system info via API
+autopod comfy info
+
+# When done, stop tunnel and terminate pod
+autopod tunnel stop
+autopod kill -y
+```
+
+**Why SSH tunnel is better than HTTP proxy:**
+- ✅ Encrypted and authenticated (SSH keys)
+- ✅ Not publicly accessible on internet
+- ✅ No 100-second timeout limit
+- ✅ Works for both HTTP API and WebSocket connections
+- ✅ Same tunnel serves both browser GUI and API calls
+
 ---
 
 ## Configuration
@@ -598,9 +811,11 @@ Configuration is stored in `~/.autopod/config.json` with chmod 600 (secure).
     "runpod": {
       "api_key": "your-api-key-here",
       "ssh_key_path": "/Users/you/.ssh/id_ed25519",
-      "default_template": "runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04",
+      "default_template": "runpod/comfyui:latest",
       "default_region": "NA-US",
-      "cloud_type": "SECURE"
+      "cloud_type": "SECURE",
+      "default_volume_id": "",
+      "default_volume_mount": "/workspace"
     }
   },
   "defaults": {
@@ -743,6 +958,34 @@ This is expected behavior - GPU availability is not guaranteed. Options:
 3. Try `--cloud-type ALL` to include community cloud
 4. Update GPU preferences in config
 
+### SSH Tunnel Issues
+
+**Symptom:** `autopod tunnel start` fails or `autopod comfy status` reports connection error
+
+**Solutions:**
+1. Check if pod SSH is ready: `autopod info` (wait ~30-60s after creation)
+2. Verify port 8188 isn't already in use:
+   ```bash
+   lsof -i :8188
+   ```
+3. Kill stale tunnel processes:
+   ```bash
+   autopod tunnel cleanup
+   ```
+4. Manually stop and recreate tunnel:
+   ```bash
+   autopod tunnel stop
+   autopod tunnel start
+   ```
+
+**Symptom:** ComfyUI not responding through tunnel
+
+**Solutions:**
+1. ComfyUI takes ~60 seconds to start after pod creation
+2. Check ComfyUI status: `autopod comfy status`
+3. Verify tunnel is active: `autopod tunnel list`
+4. Test connectivity via browser: `open http://localhost:8188`
+
 ---
 
 ## Examples from Tests
@@ -773,23 +1016,42 @@ python test_cli_integration.py
 - Configuration management
 - Rich terminal UI
 
-### V1.5 - ComfyUI Integration (Planned)
-- ComfyUI HTTP API client
+### V1.2 - ComfyUI Integration ✅
+- SSH tunnel management with auto-recovery
+- ComfyUI HTTP API client (status, info, system stats)
+- Network volume support for persistent storage
+- Secure localhost access (no public URLs)
+- Tunnel commands (start, stop, list, cleanup)
+- ComfyUI commands (status, info)
+
+### V1.3 - Workflow Execution (Next)
+- Job-based workflow execution (`autopod comfy run`)
 - File upload/download via ComfyUI API
-- Network volume support
-- Workflow submission
+- Workflow template system
+- Job JSON format for workflow definitions
+- Workflow submission and monitoring
+- Output retrieval and download
+- End-to-end automation
+
+### V1.4 - True SSH Tunnels (Planned)
+- Public IP pod creation (`--enable-ssh-tunnel`)
+- True SSH with port forwarding support
+- SSH daemon detection and setup
+- Hybrid access (SSH tunnel + HTTP proxy fallback)
+- Enhanced security for production workflows
+
+### V2.0 - Job Management & Safety (Planned)
+- Sequential job queue (multiple jobs, single pod)
+- Cost safety (budget limits, timeout warnings)
+- Enhanced UI with live progress
+- Interactive controls (keyboard shortcuts)
 - WebSocket monitoring for real-time progress
 
-### V2.0 - Job Management (Planned)
-- Sequential job queue
-- Cost safety features
-- Enhanced UI with live progress
-- Interactive controls
-
 ### V3.0 - Multi-Pod Parallelization (Planned)
-- Multiple SSH tunnels
-- Parallel job execution
-- Multi-pod monitoring
+- Multiple SSH tunnels (unique ports per pod)
+- Parallel job execution (one pod per job)
+- Multi-pod monitoring and aggregation
+- Textualize TUI for visual management
 
 ---
 
@@ -810,7 +1072,9 @@ autopod/
 │   ├── config.py                 # Configuration management
 │   ├── logging.py                # Logging setup
 │   ├── pod_manager.py            # High-level pod management
-│   ├── ssh.py                    # SSH tunnel and shell access
+│   ├── ssh.py                    # SSH shell access
+│   ├── tunnel.py                 # SSH tunnel management (V1.2)
+│   ├── comfyui.py                # ComfyUI API client (V1.2)
 │   └── providers/                # Provider abstraction
 │       ├── __init__.py
 │       ├── base.py               # Abstract CloudProvider
@@ -820,7 +1084,9 @@ autopod/
     └── manual/                   # Manual integration tests
         ├── test_cli_integration.py
         ├── test_pod_creation.py
-        └── test_ssh_simple.py
+        ├── test_ssh_simple.py
+        ├── test_v1.2_integration_comfyui.py
+        └── test_v1.2_tunnel_integration.py
 ```
 
 ---

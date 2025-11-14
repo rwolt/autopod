@@ -26,6 +26,7 @@ from autopod.providers import RunPodProvider
 from autopod.pod_manager import PodManager
 from autopod.logging import setup_logging
 from autopod.tunnel import TunnelManager, SSHTunnel
+from autopod.comfyui import ComfyUIClient
 
 console = Console()
 logger = setup_logging()
@@ -980,6 +981,389 @@ def tunnel_stop_all(yes):
     except Exception as e:
         console.print(f"\n[red]✗ Error: {e}[/red]")
         logger.exception("Failed to stop all tunnels")
+        sys.exit(1)
+
+
+# ============================================================================
+# ComfyUI Management Commands
+# ============================================================================
+
+
+def ensure_tunnel(pod_id: str, local_port: int = 8188, remote_port: int = 8188) -> bool:
+    """Ensure SSH tunnel exists for pod, creating if necessary.
+
+    Args:
+        pod_id: Pod ID to create tunnel for
+        local_port: Local port to bind (default: 8188)
+        remote_port: Remote port to forward (default: 8188)
+
+    Returns:
+        True if tunnel is ready, False otherwise
+    """
+    try:
+        # Load config
+        config = load_config()
+        ssh_key = config["providers"]["runpod"].get("ssh_key_path")
+
+        # Initialize managers
+        provider = RunPodProvider(api_key=config["providers"]["runpod"]["api_key"])
+        pod_manager = PodManager(provider)
+        tunnel_manager = TunnelManager()
+
+        # Check if tunnel already exists
+        existing_tunnel = tunnel_manager.get_tunnel(pod_id)
+
+        if existing_tunnel:
+            # Tunnel exists - check if it's active
+            if existing_tunnel.is_active():
+                # Test connectivity
+                if existing_tunnel.test_connectivity(timeout=5):
+                    console.print(f"[dim]Using existing tunnel on port {existing_tunnel.local_port}[/dim]")
+                    return True
+                else:
+                    console.print("[yellow]⚠️  Existing tunnel is not responding, recreating...[/yellow]")
+                    existing_tunnel.stop()
+                    tunnel_manager.remove_tunnel(pod_id)
+            else:
+                # Tunnel is dead, remove it
+                console.print("[dim]Removing stale tunnel...[/dim]")
+                tunnel_manager.remove_tunnel(pod_id)
+
+        # No active tunnel - create one
+        console.print(f"\n[cyan]Creating SSH tunnel for pod {pod_id}...[/cyan]")
+        console.print(f"  Local port:  {local_port}")
+        console.print(f"  Remote port: {remote_port}\n")
+
+        # Get pod info to check SSH readiness
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console
+        ) as progress:
+            progress.add_task("Checking pod status...", total=None)
+            pod = pod_manager.get_pod_info(pod_id)
+
+        if not pod:
+            console.print(f"[red]✗ Pod {pod_id} not found[/red]")
+            return False
+
+        if not pod.get("ssh_ready"):
+            console.print(f"[yellow]⚠️  Pod {pod_id} SSH is not ready[/yellow]")
+            console.print("[dim]Wait for pod to finish starting, then try again[/dim]")
+            return False
+
+        # Get SSH connection string
+        try:
+            ssh_connection_string = provider.get_ssh_connection_string(pod_id)
+        except RuntimeError as e:
+            console.print(f"[red]✗ {e}[/red]")
+            return False
+
+        # Create tunnel
+        try:
+            tunnel_obj = tunnel_manager.create_tunnel(
+                pod_id=pod_id,
+                ssh_connection_string=ssh_connection_string,
+                local_port=local_port,
+                remote_port=remote_port,
+                ssh_key_path=ssh_key
+            )
+        except RuntimeError as e:
+            console.print(f"[red]✗ Failed to create tunnel: {e}[/red]")
+            return False
+
+        # Start tunnel
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console
+        ) as progress:
+            progress.add_task("Establishing SSH tunnel...", total=None)
+
+            if not tunnel_obj.start():
+                console.print("[red]✗ Failed to start SSH tunnel[/red]")
+                return False
+
+        # Save state
+        tunnel_manager._save_state()
+
+        # Test connectivity with timeout
+        console.print("[yellow]Testing tunnel connectivity...[/yellow]")
+        time.sleep(2)  # Brief pause for tunnel to establish
+
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            if tunnel_obj.test_connectivity(timeout=10):
+                console.print(f"[green]✓ Tunnel is ready![/green]\n")
+                return True
+
+            if attempt < max_attempts - 1:
+                console.print(f"[dim]Attempt {attempt + 1}/{max_attempts} failed, retrying...[/dim]")
+                time.sleep(2)
+
+        console.print("[yellow]⚠️  Tunnel created but service not responding yet[/yellow]")
+        console.print("[dim]The remote service might still be starting up[/dim]\n")
+        return True  # Tunnel exists, even if service isn't ready
+
+    except Exception as e:
+        console.print(f"[red]✗ Error ensuring tunnel: {e}[/red]")
+        logger.exception("Failed to ensure tunnel")
+        return False
+
+
+@cli.group()
+def comfy():
+    """Manage ComfyUI on pods."""
+    pass
+
+
+@comfy.command("status")
+@click.argument("pod_id", required=False)
+@click.option("--port", type=int, default=8188, help="Local port where ComfyUI is accessible (default: 8188)")
+@click.option("--no-tunnel", is_flag=True, help="Skip automatic tunnel creation (use existing tunnel or HTTP proxy)")
+def comfy_status(pod_id, port, no_tunnel):
+    """Check if ComfyUI is ready and responding.
+
+    This command checks if ComfyUI is accessible via SSH tunnel on localhost.
+    Returns exit code 0 if ready, 1 if not ready.
+
+    Example:
+        autopod comfy status pod-abc       # Check specific pod
+        autopod comfy status               # Auto-select if only one pod
+        autopod comfy status --port 8189   # Custom port
+    """
+    try:
+        provider = load_provider()
+        manager = PodManager(provider, console)
+
+        # Auto-select if no pod_id provided
+        if not pod_id:
+            pod_id = get_single_pod_id(manager)
+            if not pod_id:
+                sys.exit(1)
+            console.print(f"[dim]Auto-selected pod: {pod_id}[/dim]\n")
+
+        # Ensure tunnel exists (unless --no-tunnel flag)
+        if not no_tunnel:
+            if not ensure_tunnel(pod_id, local_port=port, remote_port=8188):
+                console.print("[red]✗ Failed to establish SSH tunnel[/red]")
+                console.print("[dim]Try manually: autopod tunnel start {pod_id}[/dim]")
+                sys.exit(1)
+
+        console.print(f"[bold]Checking ComfyUI status for pod {pod_id}[/bold]")
+        console.print(f"  Connecting to: http://localhost:{port}\n")
+
+        # Create ComfyUI client
+        client = ComfyUIClient(base_url=f"http://localhost:{port}")
+
+        # Check if ready
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console
+        ) as progress:
+            progress.add_task("Checking ComfyUI...", total=None)
+
+            ready = client.is_ready()
+
+        if ready:
+            # Get system stats for extra info
+            stats = client.get_system_stats()
+
+            # Display success panel
+            status_text = "[green]✓ ComfyUI is ready![/green]\n\n"
+
+            if stats and "system" in stats:
+                system = stats["system"]
+                if "os" in system:
+                    status_text += f"OS: {system['os']}\n"
+                if "python_version" in system:
+                    status_text += f"Python: {system['python_version']}\n"
+
+            if stats and "devices" in stats and len(stats["devices"]) > 0:
+                status_text += "\nGPU Devices:\n"
+                for i, device in enumerate(stats["devices"]):
+                    device_name = device.get("name", "Unknown")
+                    status_text += f"  {i}: {device_name}\n"
+                    if "vram_total" in device:
+                        vram_gb = device["vram_total"] / (1024**3)
+                        vram_free_gb = device.get("vram_free", 0) / (1024**3)
+                        status_text += f"     VRAM: {vram_free_gb:.1f} GB free / {vram_gb:.1f} GB total\n"
+
+            console.print(Panel(
+                status_text,
+                title="[bold green]ComfyUI Status[/bold green]",
+                border_style="green"
+            ))
+
+            sys.exit(0)
+        else:
+            # Not ready
+            console.print(Panel(
+                "[yellow]✗ ComfyUI is not ready[/yellow]\n\n"
+                "This could mean:\n"
+                "  • ComfyUI is still starting up (wait 30-60s)\n"
+                "  • SSH tunnel is not established\n"
+                "  • ComfyUI failed to start\n\n"
+                f"Troubleshooting:\n"
+                f"  1. Check if SSH tunnel exists: [cyan]autopod tunnel list[/cyan]\n"
+                f"  2. Create tunnel if needed: [cyan]autopod tunnel start {pod_id}[/cyan]\n"
+                f"  3. Check pod logs: [cyan]autopod ssh {pod_id} -c 'docker logs comfyui'[/cyan]",
+                title="[bold yellow]ComfyUI Status[/bold yellow]",
+                border_style="yellow"
+            ))
+
+            sys.exit(1)
+
+    except Exception as e:
+        console.print(f"\n[red]✗ Error checking ComfyUI status: {e}[/red]")
+        logger.exception("ComfyUI status check failed")
+        sys.exit(1)
+
+
+@comfy.command("info")
+@click.argument("pod_id", required=False)
+@click.option("--port", type=int, default=8188, help="Local port where ComfyUI is accessible (default: 8188)")
+@click.option("--no-tunnel", is_flag=True, help="Skip automatic tunnel creation (use existing tunnel or HTTP proxy)")
+def comfy_info(pod_id, port, no_tunnel):
+    """Show detailed ComfyUI information.
+
+    Displays system stats, queue info, and available endpoints.
+
+    Example:
+        autopod comfy info pod-abc         # Show info for specific pod
+        autopod comfy info                 # Auto-select if only one pod
+        autopod comfy info --port 8189     # Custom port
+    """
+    try:
+        provider = load_provider()
+        manager = PodManager(provider, console)
+
+        # Auto-select if no pod_id provided
+        if not pod_id:
+            pod_id = get_single_pod_id(manager)
+            if not pod_id:
+                sys.exit(1)
+            console.print(f"[dim]Auto-selected pod: {pod_id}[/dim]\n")
+
+        # Ensure tunnel exists (unless --no-tunnel flag)
+        if not no_tunnel:
+            if not ensure_tunnel(pod_id, local_port=port, remote_port=8188):
+                console.print("[red]✗ Failed to establish SSH tunnel[/red]")
+                console.print("[dim]Try manually: autopod tunnel start {pod_id}[/dim]")
+                sys.exit(1)
+
+        console.print(f"[bold]Fetching ComfyUI info for pod {pod_id}[/bold]")
+        console.print(f"  Connecting to: http://localhost:{port}\n")
+
+        # Create ComfyUI client
+        client = ComfyUIClient(base_url=f"http://localhost:{port}")
+
+        # Check if ready first
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console
+        ) as progress:
+            progress.add_task("Checking ComfyUI...", total=None)
+
+            if not client.is_ready():
+                console.print("\n[red]✗ ComfyUI is not ready[/red]")
+                console.print("[dim]Run 'autopod comfy status' for troubleshooting tips[/dim]\n")
+                sys.exit(1)
+
+        console.print("[green]✓ ComfyUI is ready[/green]\n")
+
+        # Fetch all info
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console
+        ) as progress:
+            task = progress.add_task("Fetching system stats...", total=None)
+            stats = client.get_system_stats()
+
+            progress.update(task, description="Fetching queue info...")
+            queue = client.get_queue_info()
+
+            progress.update(task, description="Fetching object info...")
+            objects = client.get_object_info()
+
+        # Build info display
+        info_text = ""
+
+        # System info
+        if stats and "system" in stats:
+            system = stats["system"]
+            info_text += "[bold cyan]System Information:[/bold cyan]\n"
+            if "os" in system:
+                info_text += f"  OS: {system['os']}\n"
+            if "python_version" in system:
+                info_text += f"  Python: {system['python_version']}\n"
+            if "ram_total" in system:
+                ram_gb = system["ram_total"] / (1024**3)
+                ram_free_gb = system.get("ram_free", 0) / (1024**3)
+                info_text += f"  RAM: {ram_free_gb:.1f} GB free / {ram_gb:.1f} GB total\n"
+            info_text += "\n"
+
+        # GPU devices
+        if stats and "devices" in stats and len(stats["devices"]) > 0:
+            info_text += "[bold cyan]GPU Devices:[/bold cyan]\n"
+            for i, device in enumerate(stats["devices"]):
+                device_name = device.get("name", "Unknown")
+                info_text += f"  Device {i}: {device_name}\n"
+                if "type" in device:
+                    info_text += f"    Type: {device['type']}\n"
+                if "vram_total" in device:
+                    vram_gb = device["vram_total"] / (1024**3)
+                    vram_free_gb = device.get("vram_free", 0) / (1024**3)
+                    info_text += f"    VRAM: {vram_free_gb:.1f} GB free / {vram_gb:.1f} GB total\n"
+            info_text += "\n"
+
+        # Queue info
+        if queue:
+            info_text += "[bold cyan]Queue Status:[/bold cyan]\n"
+            running_count = len(queue.get("queue_running", []))
+            pending_count = len(queue.get("queue_pending", []))
+            info_text += f"  Running jobs: {running_count}\n"
+            info_text += f"  Pending jobs: {pending_count}\n"
+            info_text += "\n"
+
+        # Available nodes
+        if objects:
+            info_text += "[bold cyan]Available Nodes:[/bold cyan]\n"
+            info_text += f"  Total node types: {len(objects)}\n"
+
+            # Sample a few common nodes
+            common_nodes = ["LoadImage", "SaveImage", "KSampler", "CheckpointLoaderSimple", "CLIPTextEncode"]
+            available_common = [node for node in common_nodes if node in objects]
+
+            if available_common:
+                info_text += f"  Common nodes available: {', '.join(available_common[:5])}\n"
+
+            info_text += "\n"
+
+        # API endpoints
+        info_text += "[bold cyan]API Endpoints:[/bold cyan]\n"
+        info_text += f"  Base URL: http://localhost:{port}\n"
+        info_text += "  GET  /system_stats - System and GPU info\n"
+        info_text += "  GET  /queue - Queue status\n"
+        info_text += "  GET  /history - Execution history\n"
+        info_text += "  GET  /object_info - Available nodes\n"
+        info_text += "  POST /prompt - Submit workflow (V1.3+)\n"
+        info_text += "  POST /upload/image - Upload files (V1.3+)\n"
+        info_text += "  GET  /view - Download outputs (V1.3+)\n"
+        info_text += "  WS   /ws - WebSocket monitoring (V2.0+)\n"
+
+        console.print(Panel(
+            info_text,
+            title=f"[bold cyan]ComfyUI Info - {pod_id}[/bold cyan]",
+            border_style="cyan"
+        ))
+
+    except Exception as e:
+        console.print(f"\n[red]✗ Error fetching ComfyUI info: {e}[/red]")
+        logger.exception("ComfyUI info fetch failed")
         sys.exit(1)
 
 
