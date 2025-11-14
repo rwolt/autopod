@@ -53,6 +53,43 @@
 - `GET /object_info` - Available nodes (for info display)
 - Note: `/prompt` (POST) deferred to V1.3 when we implement workflow submission
 
+**IMPORTANT - ComfyUI API Documentation Reference:**
+When implementing new ComfyUI endpoints, ALWAYS verify against official documentation:
+- **Primary Source**: ComfyUI GitHub repository (`comfyanonymous/ComfyUI`)
+  - Example scripts: `examples/api_workflow.py` shows complete workflow
+  - Server code: `server.py` defines all available endpoints
+- **Community Resources**:
+  - https://9elements.com/blog/hosting-a-comfyui-workflow-via-api/ (comprehensive guide)
+  - https://www.viewcomfy.com/blog/building-a-production-ready-comfyui-api (production patterns)
+- **Complete Endpoint Reference** (verify in server.py before implementing):
+  - `GET /system_stats` - System and GPU info ✅ (implemented)
+  - `GET /queue` - Queue status ✅ (implemented)
+  - `GET /history/{prompt_id}` - Execution history ✅ (implemented)
+  - `GET /object_info` - Available nodes ✅ (implemented)
+  - `POST /prompt` - Submit workflow (V1.3) - Format: `{"prompt": workflow_json, "client_id": uuid}`
+  - `POST /upload/image` - Upload files (V1.3) - multipart/form-data: `image` (file), `type` (input/output/temp), `overwrite` (bool)
+  - `GET /view` - Download outputs (V1.3) - Query params: `filename`, `type`
+  - `GET /ws` - WebSocket monitoring (V2.0) - URL: `ws://localhost:8188/ws?clientId={uuid}`
+- **WebSocket Message Types** (for V2.0 implementation):
+  - `progress`: Sampler step updates `{type:"progress", data:{value:int, max:int}}`
+  - `executing`: Current node `{type:"executing", data:{node:int|null, prompt_id:str}}`
+  - `execution_cached`: Node completion notifications
+- **Workflow Format**: ComfyUI workflows must be in **API format** (not GUI format):
+  - Export from GUI: "Save (API Format)" option
+  - Structure: `{node_id: {class_type: "NodeName", inputs: {...}}}`
+  - File references are relative to ComfyUI's input directory
+- **File Upload Flow**:
+  1. POST /upload/image → returns `{"name": "uploaded_file.png", "subfolder": "", "type": "input"}`
+  2. Modify workflow JSON to use uploaded filename in LoadImage node
+  3. POST /prompt with modified workflow
+  4. Monitor via WebSocket (optional) or poll GET /history
+  5. GET /history/{prompt_id} → extract output filenames
+  6. GET /view?filename=X&type=output → download results
+- **Architecture Decision**: Use SSH tunnels (not HTTP proxy) as primary method
+  - SSH tunnels provide encryption + authentication
+  - Both HTTP and WebSocket work through same SSH tunnel (localhost:8188)
+  - HTTP proxy available as fallback for testing only
+
 ## Instructions for Completing Tasks
 
 **IMPORTANT:** As you complete each task, you must check it off in this markdown file by changing `- [ ]` to `- [x]`. This helps track progress and ensures you don't skip any steps.
