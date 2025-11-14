@@ -1024,13 +1024,21 @@ python test_cli_integration.py
 - Tunnel commands (start, stop, list, cleanup)
 - ComfyUI commands (status, info)
 
-### V1.3 - Workflow Execution (In Progress)
+### V1.3 - Workflow Execution (Next)
+- Job-based workflow execution (`autopod comfy run`)
 - File upload/download via ComfyUI API
 - Workflow template system
 - Job JSON format for workflow definitions
 - Workflow submission and monitoring
 - Output retrieval and download
 - End-to-end automation
+
+### V1.4 - True SSH Tunnels (Planned)
+- Public IP pod creation (`--enable-ssh-tunnel`)
+- True SSH with port forwarding support
+- SSH daemon detection and setup
+- Hybrid access (SSH tunnel + HTTP proxy fallback)
+- Enhanced security for production workflows
 
 ### V2.0 - Job Management & Safety (Planned)
 - Sequential job queue (multiple jobs, single pod)
