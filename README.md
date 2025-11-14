@@ -13,12 +13,11 @@ autopod automates the process of creating, managing, and accessing RunPod GPU po
 ## Features
 
 ### V1.2 (Current) - ComfyUI Integration
-- **SSH Tunnel Management** - Automatic SSH tunnels for secure ComfyUI access
-- **ComfyUI API Client** - Query ComfyUI status, system info, and queue via API
+- **ComfyUI API Client** - Query ComfyUI status, system info, queue, history via HTTP API
+- **HTTP Proxy Access** - Access ComfyUI GUI via RunPod's HTTP proxy URLs
 - **Network Volume Support** - Attach RunPod network volumes for persistent model storage
-- **Tunnel Auto-Recovery** - Automatic tunnel health checks and recreation
 - **ComfyUI Commands** - `autopod comfy status` and `autopod comfy info`
-- **Localhost Access** - Access ComfyUI GUI at http://localhost:8188 via SSH tunnel
+- **Tunnel Infrastructure** - SSH tunnel management groundwork (full support in V1.4)
 - **All V1.1 Features** - Full backward compatibility with pod lifecycle management
 
 ### V1.1 Features
@@ -26,7 +25,7 @@ autopod automates the process of creating, managing, and accessing RunPod GPU po
 - **Datacenter Selection** - Specify datacenter via `--datacenter` flag (e.g., CA-MTL-1)
 - **Optimized Defaults** - 50GB container disk by default (perfect for ComfyUI)
 - **Auto-Cleanup** - Stale pods automatically removed from cache
-- **SSH Access** - Seamless shell access and command execution (with PTY-free mode)
+- **SSH Access** - Interactive shell access to pods
 - **Pod Management** - List, info, start, stop, and terminate operations
 - **Cost Management** - Stop pods to reduce costs (~$0.02/hr), restart when needed
 - **Rich Terminal UI** - Beautiful tables, progress bars, and formatted output
@@ -93,12 +92,6 @@ SSH into the pod:
 
 ```bash
 autopod ssh
-```
-
-Or execute a command:
-
-```bash
-autopod ssh -c "nvidia-smi"
 ```
 
 **Note:** If your SSH key has a passphrase, add it to ssh-agent to avoid authentication issues:
@@ -361,13 +354,10 @@ autopod info
 ### SSH Access
 
 #### `autopod ssh [POD_ID]` (alias: `shell`)
-Open SSH shell or execute commands on a pod
+Open interactive SSH shell on a pod
 
 **Arguments:**
 - `[POD_ID]` - Optional pod ID (auto-selects if only one pod exists)
-
-**Options:**
-- `-c, --command <CMD>` - Execute command instead of interactive shell
 
 **Examples:**
 
@@ -381,20 +371,12 @@ Interactive shell (specific pod):
 autopod ssh abc-123
 ```
 
-Execute single command:
-```bash
-autopod ssh abc-123 -c "nvidia-smi"
-```
-
-Execute command with auto-select:
-```bash
-autopod ssh -c "ls -la"
-```
-
 **Alias:**
 ```bash
 autopod shell abc-123    # Same as 'ssh'
 ```
+
+**Note:** RunPod's proxied SSH does not support command execution (`-c` flag) or port forwarding. Only interactive shell sessions are supported.
 
 ---
 
@@ -499,8 +481,21 @@ autopod rm abc-123           # Docker-like alias
 
 ### SSH Tunnels
 
+**Note:** SSH tunnel commands are available in V1.2, but **do not currently work** due to RunPod's proxied SSH limitations. RunPod's `ssh.runpod.io` proxy does not support SSH port forwarding (`-L` flag). Full SSH tunnel support will be available in V1.4 when public IP pod creation is implemented.
+
+**Current Status (V1.2):**
+- ❌ SSH tunnels: Not functional (RunPod proxy limitation)
+- ✅ HTTP proxy: Works via `--expose-http` flag
+- ✅ Tunnel infrastructure: Commands exist for V1.4 readiness
+
+**For V1.2, use HTTP proxy instead:**
+```bash
+autopod connect --expose-http    # Creates pod with HTTP proxy access
+# Access at: https://[pod-id]-8188.proxy.runpod.net
+```
+
 #### `autopod tunnel start [POD_ID]`
-Create an SSH tunnel to access services running on a pod
+Create an SSH tunnel to access services running on a pod (V1.4+)
 
 **Arguments:**
 - `[POD_ID]` - Optional pod ID (auto-selects if only one pod exists)
@@ -521,10 +516,7 @@ Create tunnel with specific ports:
 autopod tunnel start abc-123 --local-port 8188 --remote-port 8188
 ```
 
-Access ComfyUI in browser after tunnel created:
-```bash
-open http://localhost:8188
-```
+**Note:** This command exists but will fail in V1.2 due to RunPod SSH proxy limitations. Use `--expose-http` instead.
 
 #### `autopod tunnel stop [POD_ID]`
 Stop an SSH tunnel for a pod
@@ -594,13 +586,12 @@ Check specific pod:
 autopod comfy status abc-123
 ```
 
-**Output (ready):**
+**Output (ready with HTTP proxy):**
 ```
 ╭─────────── ComfyUI Status: READY ───────────╮
 │ Pod ID:       abc-123                       │
-│ Tunnel:       localhost:8188 (Active)      │
 │ ComfyUI:      Ready ✓                       │
-│ Access:       http://localhost:8188         │
+│ Access:       https://abc-123-8188.proxy... │
 ╰─────────────────────────────────────────────╯
 ```
 
@@ -608,7 +599,6 @@ autopod comfy status abc-123
 ```
 ╭────────── ComfyUI Status: NOT READY ────────╮
 │ Pod ID:       abc-123                       │
-│ Tunnel:       localhost:8188 (Active)      │
 │ ComfyUI:      Not responding ✗              │
 │ Wait Time:    ~60 seconds after pod start   │
 ╰─────────────────────────────────────────────╯
@@ -654,7 +644,7 @@ autopod comfy info abc-123
 │   Running:    0 jobs                        │
 │   Pending:    0 jobs                        │
 │                                             │
-│ Access:       http://localhost:8188         │
+│ Access:       https://abc-123-8188.proxy... │
 ╰─────────────────────────────────────────────╯
 ```
 
@@ -763,39 +753,28 @@ autopod kill abc-123 -y
 
 **Security Reminder:** HTTP proxy has no authentication. Anyone with the URL can access your ComfyUI instance. Terminate pods immediately when done to prevent unauthorized access and unnecessary charges.
 
-### Accessing ComfyUI Securely via SSH Tunnel (Recommended)
+### Accessing ComfyUI via API (V1.2)
 
-For better security, use SSH tunnels instead of HTTP proxy:
+Use the ComfyUI API client to check status and get system information:
 
 ```bash
-# Create pod WITHOUT --expose-http (more secure)
-autopod connect --gpu "RTX A40"
-
-# Create SSH tunnel (or let comfy commands auto-create it)
-autopod tunnel start
+# Create pod with HTTP proxy enabled
+autopod connect --expose-http --gpu "RTX A40"
 
 # Wait for ComfyUI to start (~60 seconds)
 autopod comfy status
 
-# Open ComfyUI in browser at localhost:8188
-open http://localhost:8188
-
-# Work with ComfyUI GUI securely (no public URL!)
-
-# Check system info via API
+# Check system info, GPU, queue via API
 autopod comfy info
 
-# When done, stop tunnel and terminate pod
-autopod tunnel stop
+# Open ComfyUI GUI in browser (use URL from output)
+# https://[pod-id]-8188.proxy.runpod.net
+
+# When done, terminate pod
 autopod kill -y
 ```
 
-**Why SSH tunnel is better than HTTP proxy:**
-- ✅ Encrypted and authenticated (SSH keys)
-- ✅ Not publicly accessible on internet
-- ✅ No 100-second timeout limit
-- ✅ Works for both HTTP API and WebSocket connections
-- ✅ Same tunnel serves both browser GUI and API calls
+**Note:** V1.2 uses HTTP proxy for browser access. SSH tunnels will be available in V1.4 for more secure localhost access.
 
 ---
 
@@ -958,33 +937,29 @@ This is expected behavior - GPU availability is not guaranteed. Options:
 3. Try `--cloud-type ALL` to include community cloud
 4. Update GPU preferences in config
 
-### SSH Tunnel Issues
+### SSH Tunnel Issues (V1.2)
 
-**Symptom:** `autopod tunnel start` fails or `autopod comfy status` reports connection error
+**Note:** SSH tunnels do not work in V1.2 due to RunPod's proxied SSH limitations. Use `--expose-http` instead.
 
-**Solutions:**
-1. Check if pod SSH is ready: `autopod info` (wait ~30-60s after creation)
-2. Verify port 8188 isn't already in use:
-   ```bash
-   lsof -i :8188
-   ```
-3. Kill stale tunnel processes:
-   ```bash
-   autopod tunnel cleanup
-   ```
-4. Manually stop and recreate tunnel:
-   ```bash
-   autopod tunnel stop
-   autopod tunnel start
-   ```
+**Symptom:** `autopod tunnel start` fails
 
-**Symptom:** ComfyUI not responding through tunnel
+**Explanation:** RunPod's `ssh.runpod.io` proxy does not support SSH port forwarding (`-L` flag). This is a known limitation.
+
+**Solution:** Use HTTP proxy instead:
+```bash
+autopod connect --expose-http    # Create pod with HTTP proxy
+autopod comfy status              # Access ComfyUI via proxy
+```
+
+SSH tunnels will be available in V1.4 when public IP pod support is added.
+
+**Symptom:** ComfyUI not responding via HTTP proxy
 
 **Solutions:**
 1. ComfyUI takes ~60 seconds to start after pod creation
 2. Check ComfyUI status: `autopod comfy status`
-3. Verify tunnel is active: `autopod tunnel list`
-4. Test connectivity via browser: `open http://localhost:8188`
+3. Verify pod was created with `--expose-http` flag
+4. Check the proxy URL in the pod creation output or `autopod info`
 
 ---
 
@@ -1017,12 +992,11 @@ python test_cli_integration.py
 - Rich terminal UI
 
 ### V1.2 - ComfyUI Integration ✅
-- SSH tunnel management with auto-recovery
 - ComfyUI HTTP API client (status, info, system stats)
+- HTTP proxy access for ComfyUI GUI (via `--expose-http`)
 - Network volume support for persistent storage
-- Secure localhost access (no public URLs)
-- Tunnel commands (start, stop, list, cleanup)
-- ComfyUI commands (status, info)
+- ComfyUI commands (`autopod comfy status`, `autopod comfy info`)
+- Tunnel infrastructure (groundwork for V1.4, not functional in V1.2)
 
 ### V1.3 - Workflow Execution (Next)
 - Job-based workflow execution (`autopod comfy run`)
