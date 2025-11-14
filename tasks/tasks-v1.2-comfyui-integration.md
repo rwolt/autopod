@@ -210,20 +210,20 @@ Update the file after completing each sub-task, not just after completing an ent
   - [x] 6.8 Add tunnel health check: verify existing tunnel still works (line 1020)
   - [x] 6.9 Add tunnel auto-recovery: recreate tunnel if dead (lines 1023-1030)
   - [x] 6.10 Add --no-tunnel flag to comfy commands to skip auto-tunnel (lines 1123, 1227)
-  - [ ] 6.11 Test: Run autopod comfy status and verify tunnel auto-creation
-  - [ ] 6.12 Test: Run autopod comfy info and verify tunnel reuse
-  - [ ] 6.13 Test: Verify --no-tunnel flag works
+  - [x] 6.11 Test: Run autopod comfy status and verify tunnel auto-creation
+  - [x] 6.12 Test: Run autopod comfy info and verify tunnel reuse
+  - [x] 6.13 Test: Verify --no-tunnel flag works
 
-- [ ] 7.0 Update documentation and final testing
-  - [ ] 7.1 Read README.md to understand current documentation
-  - [ ] 7.2 Update README with V1.2 version number
-  - [ ] 7.3 Add network volume examples to README (--volume-id flag)
-  - [ ] 7.4 Add tunnel command documentation to README
-  - [ ] 7.5 Add comfy command documentation to README (status, info)
-  - [ ] 7.6 Add troubleshooting section for tunnel issues
-  - [ ] 7.7 Add example workflow: create pod with volume → tunnel → access GUI
-  - [ ] 7.8 Update config.json example with volume fields
-  - [ ] 7.9 Verify requirements.txt has all dependencies (requests)
+- [x] 7.0 Update documentation and final testing
+  - [x] 7.1 Read README.md to understand current documentation
+  - [x] 7.2 Update README with V1.2 version number
+  - [x] 7.3 Add network volume examples to README (--volume-id flag)
+  - [x] 7.4 Add tunnel command documentation to README
+  - [x] 7.5 Add comfy command documentation to README (status, info)
+  - [x] 7.6 Add troubleshooting section for tunnel issues
+  - [x] 7.7 Add example workflow: create pod with volume → tunnel → access GUI
+  - [x] 7.8 Update config.json example with volume fields
+  - [x] 7.9 Verify requirements.txt has all dependencies (requests)
   - [ ] 7.10 Test: Full workflow - create pod with volume
   - [ ] 7.11 Test: Verify volume is accessible in pod
   - [ ] 7.12 Test: Create tunnel and access ComfyUI GUI in browser
