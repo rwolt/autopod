@@ -51,7 +51,7 @@ def get_default_config() -> Dict:
             "runpod": {
                 "api_key": "",
                 "ssh_key_path": "",
-                "default_template": "promptalchemist/comfyui-docker-new:latest",
+                "default_template": "runpod/comfyui:latest",
                 "default_region": "NA-US",
                 "cloud_type": "secure",
                 "default_volume_id": "",  # Optional: Network volume ID to attach by default
@@ -263,5 +263,18 @@ def config_init_wizard() -> Dict:
 
     console.print("\n[bold green]✓ Configuration complete![/bold green]")
     console.print(f"Config saved to: {get_config_path()}")
+
+    # Show helpful guidance about editing config
+    console.print("\n[bold cyan]💡 Configuration Tips:[/bold cyan]")
+    config_path = get_config_path()
+    console.print(f"  • Config file location: [cyan]{config_path}[/cyan]")
+    console.print("  • You can edit this file anytime with your favorite text editor")
+    console.print("  • The file is in JSON format - easy to read and modify")
+    console.print("\n[bold]Common settings you might want to change:[/bold]")
+    console.print("  • [cyan]default_template[/cyan] - Docker image for pods (default: runpod/comfyui:latest)")
+    console.print("  • [cyan]gpu_preferences[/cyan] - Your preferred GPU types in order")
+    console.print("  • [cyan]default_volume_id[/cyan] - Attach a network volume by default")
+    console.print("  • [cyan]cloud_type[/cyan] - 'secure' (default) or 'all' (includes community cloud)")
+    console.print("\n[dim]Windows users: This works the same on Windows - .autopod folder is created in your home directory[/dim]")
 
     return config
