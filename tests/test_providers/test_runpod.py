@@ -197,12 +197,15 @@ def test_create_pod_creation_fails(provider, mock_runpod):
 
 def test_get_pod_status_success(provider, mock_runpod):
     """Test successful pod status retrieval."""
+    import time
+    creation_time_millis = int((time.time() - 600) * 1000)  # 10 minutes ago
+
     mock_runpod.get_pod.return_value = {
         "id": "pod-abc123",
         "desiredStatus": "RUNNING",
         "gpuCount": 1,
         "costPerHr": 0.40,
-        "uptimeInSeconds": 600,  # 10 minutes
+        "creationTimeMillis": creation_time_millis,
         "gpuTypeId": "NVIDIA RTX A40",
         "runtime": {
             "host": "ssh.runpod.io",
@@ -218,10 +221,10 @@ def test_get_pod_status_success(provider, mock_runpod):
     assert status["status"] == "RUNNING"
     assert status["gpu_count"] == 1
     assert status["cost_per_hour"] == 0.40
-    assert status["runtime_minutes"] == 10.0
-    assert abs(status["total_cost"] - 0.0667) < 0.001  # 10min * $0.40/hr
+    assert 9.9 < status["runtime_minutes"] < 10.1
+    assert abs(status["total_cost"] - (10.0 / 60.0 * 0.40)) < 0.01
     assert status["ssh_host"] == "ssh.runpod.io"
-    assert status["ssh_port"] == 12345
+    assert status["ssh_ready"] is True
 
 
 def test_get_pod_status_not_found(provider, mock_runpod):
@@ -274,15 +277,26 @@ def test_terminate_pod_exception(provider, mock_runpod):
 
 def test_get_ssh_connection_string_success(provider, mock_runpod):
     """Test successful SSH connection string retrieval."""
-    with patch.object(provider, 'get_pod_status') as mock_status:
-        mock_status.return_value = {
-            "ssh_host": "ssh.runpod.io",
-            "ssh_port": 12345
+    # Mock the two external dependencies of get_ssh_connection_string
+    with patch.object(provider, 'get_pod_status') as mock_get_status, \
+         patch.object(provider, '_load_pod_metadata') as mock_load_metadata:
+
+        # Setup the mock return values
+        mock_get_status.return_value = {
+            "ssh_ready": True,
+            "ssh_host": "ssh.runpod.io"
+        }
+        mock_load_metadata.return_value = {
+            "pod_host_id": "xyz-123"
         }
 
+        # Call the function
         conn_str = provider.get_ssh_connection_string("pod-abc123")
 
-        assert conn_str == "root@ssh.runpod.io:12345"
+        # Assert the correct behavior
+        mock_get_status.assert_called_once_with("pod-abc123")
+        mock_load_metadata.assert_called_once_with("pod-abc123")
+        assert conn_str == "xyz-123@ssh.runpod.io"
 
 
 def test_get_ssh_connection_string_no_ssh(provider, mock_runpod):
@@ -380,3 +394,30 @@ def test_retry_with_backoff_all_fail(provider):
 
     # Should try: initial + 2 retries = 3 times
     assert mock_func.call_count == 3
+
+
+def test_get_pod_status_runtime_with_creationTimeMillis(provider, mock_runpod):
+    """Test that runtime is calculated from creationTimeMillis if uptimeInSeconds is not present."""
+    import time
+    # Set creation time to 60 minutes ago in milliseconds
+    creation_time_millis = int((time.time() - 3600) * 1000)
+
+    mock_runpod.get_pod.return_value = {
+        "id": "pod-abc123",
+        "desiredStatus": "STOPPED",
+        "gpuCount": 1,
+        "costPerHr": 0.50,
+        "creationTimeMillis": creation_time_millis,
+        "gpuTypeId": "NVIDIA RTX A6000",
+        "runtime": None  # No runtime data for stopped pod
+    }
+
+    status = provider.get_pod_status("pod-abc123")
+
+    assert status["pod_id"] == "pod-abc123"
+    assert status["status"] == "STOPPED"
+    assert status["cost_per_hour"] == 0.50
+    # Check if runtime is approximately 60 minutes
+    assert 59.9 < status["runtime_minutes"] < 60.1
+    # Check if total cost is approximately cost_per_hour
+    assert 0.49 < status["total_cost"] < 0.51
