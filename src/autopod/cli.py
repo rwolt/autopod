@@ -16,6 +16,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.status import Status
 
 from autopod.config import (
     load_config,
@@ -167,20 +168,22 @@ def config_init():
 @click.option("--template", type=str, help="Docker template (overrides config default)")
 @click.option("--cloud-type", type=click.Choice(["SECURE", "COMMUNITY", "ALL"], case_sensitive=False),
               help="Cloud type (default: SECURE)")
-@click.option("--expose-http", is_flag=True, help="Expose HTTP port 8188 for browser access (see security warning)")
+@click.option("--expose", "expose_ports", multiple=True, type=int, help="Expose port via HTTP proxy (can be used multiple times)")
+@click.option("--expose-comfyui", is_flag=True, help="Convenience: expose port 8188 (ComfyUI)")
 @click.option("--dry-run", is_flag=True, help="Show what would be created without creating")
 @click.option("--interactive", is_flag=True, help="Interactive mode with prompts")
-def connect(gpu, gpu_count, disk_size, datacenter, volume_id, volume_mount, template, cloud_type, expose_http, dry_run, interactive):
+def connect(gpu, gpu_count, disk_size, datacenter, volume_id, volume_mount, template, cloud_type, expose_ports, expose_comfyui, dry_run, interactive):
     """Create and connect to a new pod.
 
     By default, uses GPU preferences from config with smart fallback.
 
     Examples:
-        autopod connect                      # Use config preferences
-        autopod connect --gpu "RTX A40"      # Specific GPU
-        autopod connect --expose-http        # Enable browser access via HTTP proxy
-        autopod connect --dry-run            # Preview without creating
-        autopod connect --interactive        # Interactive prompts
+        autopod connect                           # Use config preferences
+        autopod connect --gpu "RTX A40"           # Specific GPU
+        autopod connect --expose-comfyui          # Expose ComfyUI (port 8188)
+        autopod connect --expose 8188 --expose 8080  # Expose multiple ports
+        autopod connect --dry-run                 # Preview without creating
+        autopod connect --interactive             # Interactive prompts
     """
     try:
         config = load_config()
@@ -235,9 +238,16 @@ def connect(gpu, gpu_count, disk_size, datacenter, volume_id, volume_mount, temp
             pod_config["volume_id"] = volume_id_value
             pod_config["volume_mount"] = volume_mount_value
 
-        # Add HTTP port exposure if requested
-        if expose_http:
-            pod_config["ports"] = "8188/http"
+        # Build port exposure list
+        ports_to_expose = list(expose_ports) if expose_ports else []
+        if expose_comfyui and 8188 not in ports_to_expose:
+            ports_to_expose.append(8188)
+
+        # Add HTTP port exposure if any ports specified
+        if ports_to_expose:
+            # Format: "8188/http,8080/http,8888/http"
+            port_strings = [f"{port}/http" for port in sorted(ports_to_expose)]
+            pod_config["ports"] = ",".join(port_strings)
 
         # Show configuration
         console.print("\n[bold cyan]Pod Configuration:[/bold cyan]")
@@ -249,17 +259,18 @@ def connect(gpu, gpu_count, disk_size, datacenter, volume_id, volume_mount, temp
             console.print(f"  Datacenter: {datacenter_value}")
         if volume_id_value:
             console.print(f"  Volume:     {volume_id_value} → {volume_mount_value}")
-        if expose_http:
-            console.print(f"  HTTP:       [yellow]Port 8188 exposed (HTTP proxy)[/yellow]")
+        if ports_to_expose:
+            ports_display = ", ".join(str(p) for p in sorted(ports_to_expose))
+            console.print(f"  HTTP Ports: [yellow]{ports_display} (exposed via HTTP proxy)[/yellow]")
 
         # Show security warning if exposing HTTP
-        if expose_http:
+        if ports_to_expose:
             console.print("\n[bold yellow]⚠️  Security Warning:[/bold yellow]")
-            console.print("[yellow]ComfyUI will be accessible via RunPod HTTP proxy.[/yellow]")
-            console.print("[dim]• Anyone with the URL can access your ComfyUI (no authentication)[/dim]")
-            console.print("[dim]• URL format: https://[pod-id]-8188.proxy.runpod.net[/dim]")
+            console.print(f"[yellow]{len(ports_to_expose)} port(s) will be accessible via RunPod HTTP proxy.[/yellow]")
+            console.print("[dim]• Anyone with the URL can access these services (no authentication)[/dim]")
+            console.print("[dim]• URL format: https://[pod-id]-[port].proxy.runpod.net[/dim]")
             console.print("[dim]• Traffic is HTTPS encrypted but RunPod can inspect it[/dim]")
-            console.print("[dim]• Recommended: Terminate pod when not in use[/dim]")
+            console.print("[dim]• Recommended: Only expose ports you need, terminate pod when not in use[/dim]")
             console.print("[dim]• Read more: https://docs.runpod.io/pods/configuration/expose-ports[/dim]\n")
 
         if dry_run:
@@ -316,12 +327,17 @@ def connect(gpu, gpu_count, disk_size, datacenter, volume_id, volume_mount, temp
 
         console.print(f"\n[green]✓ Pod created successfully: {pod_id}[/green]")
 
-        # Show HTTP proxy URL if port 8188 is exposed
-        if expose_http:
-            http_url = f"https://{pod_id}-8188.proxy.runpod.net"
-            console.print(f"\n[bold]🌐 ComfyUI Access:[/bold]")
-            console.print(f"  [cyan]{http_url}[/cyan]")
-            console.print(f"  [dim](Wait ~30s for ComfyUI to start)[/dim]")
+        # Show HTTP proxy URLs for all exposed ports
+        if ports_to_expose:
+            console.print(f"\n[bold]🌐 HTTP Proxy Access:[/bold]")
+            for port in sorted(ports_to_expose):
+                http_url = f"https://{pod_id}-{port}.proxy.runpod.net"
+                # Only label port 8188 as ComfyUI if user explicitly used --expose-comfyui
+                if port == 8188 and expose_comfyui:
+                    console.print(f"  ComfyUI: [cyan]{http_url}[/cyan]")
+                else:
+                    console.print(f"  Port {port}: [cyan]{http_url}[/cyan]")
+            console.print(f"  [dim](Services may take 30-60s to start)[/dim]")
 
         # Show next steps
         console.print("\n[bold]Next steps:[/bold]")
@@ -700,7 +716,11 @@ def rm_alias(pod_id, yes):
 
 @cli.group()
 def tunnel():
-    """Manage SSH tunnels to pods."""
+    """Manage SSH tunnels to pods manually.
+
+    Tunnels are no longer created automatically. Use 'tunnel start' to create
+    a persistent tunnel and 'tunnel stop' to remove it.
+    """
     pass
 
 
@@ -989,128 +1009,6 @@ def tunnel_stop_all(yes):
 # ============================================================================
 
 
-def ensure_tunnel(pod_id: str, local_port: int = 8188, remote_port: int = 8188) -> bool:
-    """Ensure SSH tunnel exists for pod, creating if necessary.
-
-    Args:
-        pod_id: Pod ID to create tunnel for
-        local_port: Local port to bind (default: 8188)
-        remote_port: Remote port to forward (default: 8188)
-
-    Returns:
-        True if tunnel is ready, False otherwise
-    """
-    try:
-        # Load config
-        config = load_config()
-        ssh_key = config["providers"]["runpod"].get("ssh_key_path")
-
-        # Initialize managers
-        provider = RunPodProvider(api_key=config["providers"]["runpod"]["api_key"])
-        pod_manager = PodManager(provider)
-        tunnel_manager = TunnelManager()
-
-        # Check if tunnel already exists
-        existing_tunnel = tunnel_manager.get_tunnel(pod_id)
-
-        if existing_tunnel:
-            # Tunnel exists - check if it's active
-            if existing_tunnel.is_active():
-                # Test connectivity
-                if existing_tunnel.test_connectivity(timeout=5):
-                    console.print(f"[dim]Using existing tunnel on port {existing_tunnel.local_port}[/dim]")
-                    return True
-                else:
-                    console.print("[yellow]⚠️  Existing tunnel is not responding, recreating...[/yellow]")
-                    existing_tunnel.stop()
-                    tunnel_manager.remove_tunnel(pod_id)
-            else:
-                # Tunnel is dead, remove it
-                console.print("[dim]Removing stale tunnel...[/dim]")
-                tunnel_manager.remove_tunnel(pod_id)
-
-        # No active tunnel - create one
-        console.print(f"\n[cyan]Creating SSH tunnel for pod {pod_id}...[/cyan]")
-        console.print(f"  Local port:  {local_port}")
-        console.print(f"  Remote port: {remote_port}\n")
-
-        # Get pod info to check SSH readiness
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console
-        ) as progress:
-            progress.add_task("Checking pod status...", total=None)
-            pod = pod_manager.get_pod_info(pod_id)
-
-        if not pod:
-            console.print(f"[red]✗ Pod {pod_id} not found[/red]")
-            return False
-
-        if not pod.get("ssh_ready"):
-            console.print(f"[yellow]⚠️  Pod {pod_id} SSH is not ready[/yellow]")
-            console.print("[dim]Wait for pod to finish starting, then try again[/dim]")
-            return False
-
-        # Get SSH connection string
-        try:
-            ssh_connection_string = provider.get_ssh_connection_string(pod_id)
-        except RuntimeError as e:
-            console.print(f"[red]✗ {e}[/red]")
-            return False
-
-        # Create tunnel
-        try:
-            tunnel_obj = tunnel_manager.create_tunnel(
-                pod_id=pod_id,
-                ssh_connection_string=ssh_connection_string,
-                local_port=local_port,
-                remote_port=remote_port,
-                ssh_key_path=ssh_key
-            )
-        except RuntimeError as e:
-            console.print(f"[red]✗ Failed to create tunnel: {e}[/red]")
-            return False
-
-        # Start tunnel
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console
-        ) as progress:
-            progress.add_task("Establishing SSH tunnel...", total=None)
-
-            if not tunnel_obj.start():
-                console.print("[red]✗ Failed to start SSH tunnel[/red]")
-                return False
-
-        # Save state
-        tunnel_manager._save_state()
-
-        # Test connectivity with timeout
-        console.print("[yellow]Testing tunnel connectivity...[/yellow]")
-        time.sleep(2)  # Brief pause for tunnel to establish
-
-        max_attempts = 3
-        for attempt in range(max_attempts):
-            if tunnel_obj.test_connectivity(timeout=10):
-                console.print(f"[green]✓ Tunnel is ready![/green]\n")
-                return True
-
-            if attempt < max_attempts - 1:
-                console.print(f"[dim]Attempt {attempt + 1}/{max_attempts} failed, retrying...[/dim]")
-                time.sleep(2)
-
-        console.print("[yellow]⚠️  Tunnel created but service not responding yet[/yellow]")
-        console.print("[dim]The remote service might still be starting up[/dim]\n")
-        return True  # Tunnel exists, even if service isn't ready
-
-    except Exception as e:
-        console.print(f"[red]✗ Error ensuring tunnel: {e}[/red]")
-        logger.exception("Failed to ensure tunnel")
-        return False
-
-
 @cli.group()
 def comfy():
     """Manage ComfyUI on pods."""
@@ -1119,18 +1017,14 @@ def comfy():
 
 @comfy.command("status")
 @click.argument("pod_id", required=False)
-@click.option("--port", type=int, default=8188, help="Local port where ComfyUI is accessible (default: 8188)")
-@click.option("--no-tunnel", is_flag=True, help="Skip automatic tunnel creation (use existing tunnel or HTTP proxy)")
-def comfy_status(pod_id, port, no_tunnel):
+def comfy_status(pod_id):
     """Check if ComfyUI is ready and responding.
 
-    This command checks if ComfyUI is accessible via SSH tunnel on localhost.
     Returns exit code 0 if ready, 1 if not ready.
 
     Example:
         autopod comfy status pod-abc       # Check specific pod
         autopod comfy status               # Auto-select if only one pod
-        autopod comfy status --port 8189   # Custom port
     """
     try:
         provider = load_provider()
@@ -1143,77 +1037,40 @@ def comfy_status(pod_id, port, no_tunnel):
                 sys.exit(1)
             console.print(f"[dim]Auto-selected pod: {pod_id}[/dim]\n")
 
-        # Ensure tunnel exists (unless --no-tunnel flag)
-        if not no_tunnel:
-            if not ensure_tunnel(pod_id, local_port=port, remote_port=8188):
-                console.print("[red]✗ Failed to establish SSH tunnel[/red]")
-                console.print("[dim]Try manually: autopod tunnel start {pod_id}[/dim]")
-                sys.exit(1)
+        # Get raw pod data to determine the correct URL
+        import runpod
+        pod_data = runpod.get_pod(pod_id)
+        if not pod_data:
+            console.print(f"[red]✗ Pod {pod_id} not found.[/red]")
+            sys.exit(1)
+
+        # Determine the URL for ComfyUI
+        comfy_url = None
+        runtime = pod_data.get("runtime", {})
+        if runtime and "ports" in runtime:
+            for p in runtime["ports"]:
+                if p.get("privatePort") == 8188 and p.get("ip") == "0.0.0.0":
+                    comfy_url = f"https://{pod_id}-8188.proxy.runpod.net"
+                    break
+        
+        if not comfy_url:
+            comfy_url = "http://localhost:8188"
 
         console.print(f"[bold]Checking ComfyUI status for pod {pod_id}[/bold]")
-        console.print(f"  Connecting to: http://localhost:{port}\n")
+        console.print(f"  [cyan]URL:[/cyan] {comfy_url}")
 
         # Create ComfyUI client
-        client = ComfyUIClient(base_url=f"http://localhost:{port}")
+        client = ComfyUIClient(base_url=comfy_url)
 
-        # Check if ready
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console
-        ) as progress:
-            progress.add_task("Checking ComfyUI...", total=None)
-
-            ready = client.is_ready()
-
-        if ready:
-            # Get system stats for extra info
-            stats = client.get_system_stats()
-
-            # Display success panel
-            status_text = "[green]✓ ComfyUI is ready![/green]\n\n"
-
-            if stats and "system" in stats:
-                system = stats["system"]
-                if "os" in system:
-                    status_text += f"OS: {system['os']}\n"
-                if "python_version" in system:
-                    status_text += f"Python: {system['python_version']}\n"
-
-            if stats and "devices" in stats and len(stats["devices"]) > 0:
-                status_text += "\nGPU Devices:\n"
-                for i, device in enumerate(stats["devices"]):
-                    device_name = device.get("name", "Unknown")
-                    status_text += f"  {i}: {device_name}\n"
-                    if "vram_total" in device:
-                        vram_gb = device["vram_total"] / (1024**3)
-                        vram_free_gb = device.get("vram_free", 0) / (1024**3)
-                        status_text += f"     VRAM: {vram_free_gb:.1f} GB free / {vram_gb:.1f} GB total\n"
-
-            console.print(Panel(
-                status_text,
-                title="[bold green]ComfyUI Status[/bold green]",
-                border_style="green"
-            ))
-
-            sys.exit(0)
-        else:
-            # Not ready
-            console.print(Panel(
-                "[yellow]✗ ComfyUI is not ready[/yellow]\n\n"
-                "This could mean:\n"
-                "  • ComfyUI is still starting up (wait 30-60s)\n"
-                "  • SSH tunnel is not established\n"
-                "  • ComfyUI failed to start\n\n"
-                f"Troubleshooting:\n"
-                f"  1. Check if SSH tunnel exists: [cyan]autopod tunnel list[/cyan]\n"
-                f"  2. Create tunnel if needed: [cyan]autopod tunnel start {pod_id}[/cyan]\n"
-                f"  3. Check pod logs: [cyan]autopod ssh {pod_id} -c 'docker logs comfyui'[/cyan]",
-                title="[bold yellow]ComfyUI Status[/bold yellow]",
-                border_style="yellow"
-            ))
-
-            sys.exit(1)
+        # Check if ready (quick check, no extended polling for status command)
+        with Status("[yellow]Checking ComfyUI status...[/yellow]", console=console) as status:
+            if client.is_ready(max_retries=2, retry_delay=1.0):
+                status.update("[green]✓ ComfyUI is ready.[/green]")
+                sys.exit(0)
+            else:
+                status.update("[red]✗ ComfyUI is not responding.[/red]")
+                console.print("[dim]  If the pod just started, try `autopod comfy info` for extended polling.[/dim]")
+                sys.exit(1)
 
     except Exception as e:
         console.print(f"\n[red]✗ Error checking ComfyUI status: {e}[/red]")
@@ -1223,17 +1080,15 @@ def comfy_status(pod_id, port, no_tunnel):
 
 @comfy.command("info")
 @click.argument("pod_id", required=False)
-@click.option("--port", type=int, default=8188, help="Local port where ComfyUI is accessible (default: 8188)")
-@click.option("--no-tunnel", is_flag=True, help="Skip automatic tunnel creation (use existing tunnel or HTTP proxy)")
-def comfy_info(pod_id, port, no_tunnel):
-    """Show detailed ComfyUI information.
+def comfy_info(pod_id):
+    """Show detailed ComfyUI information and status.
 
-    Displays system stats, queue info, and available endpoints.
+    Displays the ComfyUI URL, checks for service availability, and shows
+    system stats, queue info, and available endpoints.
 
     Example:
         autopod comfy info pod-abc         # Show info for specific pod
         autopod comfy info                 # Auto-select if only one pod
-        autopod comfy info --port 8189     # Custom port
     """
     try:
         provider = load_provider()
@@ -1246,33 +1101,72 @@ def comfy_info(pod_id, port, no_tunnel):
                 sys.exit(1)
             console.print(f"[dim]Auto-selected pod: {pod_id}[/dim]\n")
 
-        # Ensure tunnel exists (unless --no-tunnel flag)
-        if not no_tunnel:
-            if not ensure_tunnel(pod_id, local_port=port, remote_port=8188):
-                console.print("[red]✗ Failed to establish SSH tunnel[/red]")
-                console.print("[dim]Try manually: autopod tunnel start {pod_id}[/dim]")
-                sys.exit(1)
+        # Get raw pod data to determine the correct URL
+        # This is a temporary solution until get_pod_status returns port info
+        import runpod
+        pod_data = runpod.get_pod(pod_id)
+        if not pod_data:
+            console.print(f"[red]✗ Pod {pod_id} not found.[/red]")
+            sys.exit(1)
 
-        console.print(f"[bold]Fetching ComfyUI info for pod {pod_id}[/bold]")
-        console.print(f"  Connecting to: http://localhost:{port}\n")
+        # Determine exposed ports and URLs
+        comfy_url = None
+        exposed_ports = []
+        runtime = pod_data.get("runtime", {})
+        if runtime and "ports" in runtime:
+            for p in runtime["ports"]:
+                port = p.get("privatePort")
+                if p.get("ip") == "0.0.0.0" and port:
+                    exposed_ports.append(port)
+                    if port == 8188:
+                        comfy_url = f"https://{pod_id}-8188.proxy.runpod.net"
+
+        if not comfy_url:
+            # Default to localhost if not exposed via proxy
+            comfy_url = "http://localhost:8188"
+
+        console.print(f"[bold]ComfyUI Information for pod {pod_id}[/bold]")
+
+        # Show all exposed HTTP proxy URLs
+        if exposed_ports:
+            console.print(f"\n[bold cyan]Exposed HTTP Proxy URLs:[/bold cyan]")
+            for port in sorted(exposed_ports):
+                url = f"https://{pod_id}-{port}.proxy.runpod.net"
+                console.print(f"  Port {port}: [cyan]{url}[/cyan]")
+        else:
+            console.print(f"  [yellow]No ports exposed via HTTP proxy[/yellow]")
+            console.print(f"  [dim]Use SSH tunnel or restart pod with --expose-comfyui[/dim]")
+
+        # Show the ComfyUI URL specifically (for backward compat)
+        console.print(f"\n[bold cyan]ComfyUI URL:[/bold cyan]")
+        console.print(f"  {comfy_url}")
 
         # Create ComfyUI client
-        client = ComfyUIClient(base_url=f"http://localhost:{port}")
+        client = ComfyUIClient(base_url=comfy_url)
 
-        # Check if ready first
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console
-        ) as progress:
-            progress.add_task("Checking ComfyUI...", total=None)
+        # Poll for ComfyUI readiness (can take up to 2 minutes)
+        max_wait_seconds = 120  # 2 minutes max
+        poll_interval = 3  # Check every 3 seconds
+        start_time = time.time()
 
-            if not client.is_ready():
-                console.print("\n[red]✗ ComfyUI is not ready[/red]")
-                console.print("[dim]Run 'autopod comfy status' for troubleshooting tips[/dim]\n")
+        is_ready = False
+        with Status("[yellow]Waiting for ComfyUI to start...[/yellow]", console=console) as status:
+            while time.time() - start_time < max_wait_seconds:
+                elapsed = int(time.time() - start_time)
+                status.update(f"[yellow]⏳ Waiting for ComfyUI to start... ({elapsed}s elapsed)[/yellow]")
+
+                if client.is_ready(max_retries=1, retry_delay=0):
+                    is_ready = True
+                    status.update("[green]✓ ComfyUI is online![/green]")
+                    break
+
+                time.sleep(poll_interval)
+
+            if not is_ready:
+                status.update(f"[red]✗ ComfyUI did not respond after {max_wait_seconds}s[/red]")
+                console.print("[dim]  The service may be taking longer than expected to start, or there might be an issue.[/dim]")
+                console.print(f"[dim]  Try checking the pod logs or waiting a bit longer before retrying.[/dim]")
                 sys.exit(1)
-
-        console.print("[green]✓ ComfyUI is ready[/green]\n")
 
         # Fetch all info
         with Progress(
@@ -1345,7 +1239,7 @@ def comfy_info(pod_id, port, no_tunnel):
 
         # API endpoints
         info_text += "[bold cyan]API Endpoints:[/bold cyan]\n"
-        info_text += f"  Base URL: http://localhost:{port}\n"
+        info_text += f"  Base URL: {comfy_url}\n"
         info_text += "  GET  /system_stats - System and GPU info\n"
         info_text += "  GET  /queue - Queue status\n"
         info_text += "  GET  /history - Execution history\n"
