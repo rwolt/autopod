@@ -105,7 +105,9 @@ def get_single_pod_id(manager: PodManager) -> Optional[str]:
 
 @click.group()
 @click.version_option(version="1.0.0", prog_name="autopod")
-def cli():
+@click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging output")
+@click.pass_context
+def cli(ctx, verbose):
     """autopod - Lightweight CLI controller for RunPod instances.
 
     Manage RunPod pods, SSH access, and pod lifecycle with ease.
@@ -118,7 +120,18 @@ def cli():
       autopod ssh               SSH into pod (auto-select)
       autopod kill <pod-id>     Terminate pod
     """
-    pass
+    # Store verbose flag in context for subcommands
+    ctx.ensure_object(dict)
+    ctx.obj['verbose'] = verbose
+
+    # If verbose flag set, enable verbose logging
+    if verbose:
+        import os
+        os.environ['AUTOPOD_DEBUG'] = '1'
+        # Reinitialize logger with verbose output
+        from autopod.logging import setup_logging
+        import logging
+        setup_logging(console_level=logging.INFO)
 
 
 @cli.group()
@@ -511,9 +524,11 @@ def info(pod_id):
         runtime = pod_data.get("runtime", {})
         if runtime and "ports" in runtime:
             for p in runtime["ports"]:
-                port = p.get("privatePort")
-                if p.get("ip") == "0.0.0.0" and port:
-                    exposed_ports.append(port)
+                # HTTP proxy ports are indicated by type='http'
+                if p.get("type") == "http":
+                    port = p.get("privatePort")
+                    if port:
+                        exposed_ports.append(port)
 
         # Show HTTP proxy services with health checks
         if exposed_ports:
@@ -553,7 +568,8 @@ def info(pod_id):
 
             info_lines.append("")
             info_lines.append("[bold]🔑 SSH Access:[/bold]")
-            info_lines.append(f"  [dim]# Copy and paste this command:[/dim]")
+            info_lines.append(f"  [dim]# Quick access:[/dim] [cyan]autopod ssh {pod_id}[/cyan]")
+            info_lines.append(f"  [dim]# Or paste this command:[/dim]")
             info_lines.append(f"  [cyan]ssh {conn_string} -i {ssh_key}[/cyan]")
         else:
             info_lines.append("")

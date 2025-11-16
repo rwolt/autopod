@@ -434,13 +434,19 @@ class RunPodProvider(CloudProvider):
 
             # Store pod metadata for SSH access, volume info, and exposed ports
             if pod_host_id:
-                metadata = {"pod_host_id": pod_host_id}
+                from datetime import datetime, timezone
+                metadata = {
+                    "pod_host_id": pod_host_id,
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                }
                 if volume_id:
                     metadata["volume_id"] = volume_id
                     metadata["volume_mount"] = volume_mount
-                # Store exposed ports for easy retrieval
+                # Store exposed ports and labels for easy retrieval
                 if "ports" in config:
                     metadata["exposed_ports"] = config["ports"]
+                if "port_labels" in config:
+                    metadata["port_labels"] = config["port_labels"]
                 self._save_pod_metadata(pod_id, metadata)
 
             return pod_id
@@ -489,20 +495,31 @@ class RunPodProvider(CloudProvider):
             # Calculate runtime and cost from createdAt timestamp
             runtime_minutes = 0.0
             total_cost = 0.0
+            created_at_source = None
 
+            # Try RunPod API createdAt first
             if "createdAt" in pod and pod["createdAt"]:
-                # Parse ISO 8601 timestamp (RunPod GraphQL API standard format)
+                created_at_source = pod["createdAt"]
+            else:
+                # Fallback to metadata created_at (saved when pod was created)
+                metadata = self._load_pod_metadata(pod_id)
+                if metadata and "created_at" in metadata:
+                    created_at_source = metadata["created_at"]
+                    logger.debug(f"Using metadata created_at for pod {pod_id}")
+
+            if created_at_source:
+                # Parse ISO 8601 timestamp
                 try:
                     from datetime import datetime
-                    created_at = datetime.fromisoformat(pod["createdAt"].replace('Z', '+00:00'))
+                    created_at = datetime.fromisoformat(created_at_source.replace('Z', '+00:00'))
                     runtime_seconds = (datetime.now(created_at.tzinfo) - created_at).total_seconds()
                     runtime_minutes = runtime_seconds / 60.0
                     total_cost = (runtime_minutes / 60.0) * cost_per_hour
-                    logger.debug(f"Runtime calculated from createdAt: {runtime_minutes:.2f} minutes")
+                    logger.debug(f"Runtime calculated: {runtime_minutes:.2f} minutes, cost: ${total_cost:.4f}")
                 except (ValueError, AttributeError) as e:
-                    logger.warning(f"Failed to parse createdAt timestamp: {e}")
+                    logger.warning(f"Failed to parse created_at timestamp: {e}")
             else:
-                logger.warning(f"Pod {pod_id} missing createdAt field, runtime calculation unavailable")
+                logger.warning(f"Pod {pod_id} missing created_at, runtime calculation unavailable")
 
             # RunPod SSH connection details
             # RunPod uses SSH proxy at ssh.runpod.io, NOT direct port mapping
@@ -518,8 +535,11 @@ class RunPodProvider(CloudProvider):
 
             # Get GPU type display name
             gpu_type = "Unknown"
-            if "gpuTypeId" in pod:
-                # Try to map back to display name
+            # Try machine.gpuDisplayName first (most reliable)
+            if "machine" in pod and pod["machine"] and "gpuDisplayName" in pod["machine"]:
+                gpu_type = pod["machine"]["gpuDisplayName"]
+            elif "gpuTypeId" in pod:
+                # Fallback: Try to map back to display name
                 for display_name, gpu_id in self.DISPLAY_NAME_TO_GPU_ID.items():
                     if gpu_id == pod["gpuTypeId"]:
                         gpu_type = display_name

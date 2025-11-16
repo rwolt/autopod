@@ -76,7 +76,7 @@ def setup_logging(
 
     Args:
         level: Default logging level (default: INFO)
-        console_level: Console handler level (default: same as level)
+        console_level: Console handler level (default: WARNING - only errors/warnings to console)
         file_level: File handler level (default: DEBUG for detailed logs)
 
     Returns:
@@ -88,8 +88,13 @@ def setup_logging(
         logger.debug("Detailed debug information")
     """
     # Use default levels if not specified
+    # Check for AUTOPOD_DEBUG environment variable
+    import os
+    debug_mode = os.getenv("AUTOPOD_DEBUG", "").lower() in ("1", "true", "yes")
+
     if console_level is None:
-        console_level = level
+        # If debug mode, show INFO level in console, otherwise only warnings/errors
+        console_level = logging.INFO if debug_mode else logging.WARNING
     if file_level is None:
         file_level = logging.DEBUG  # File logs everything
 
