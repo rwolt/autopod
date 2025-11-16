@@ -539,6 +539,10 @@ def info(pod_id):
                 url = f"https://{pod_id}-{port}.proxy.runpod.net"
                 label = port_labels.get(str(port), f"Port {port}")
 
+                # Add note for unknown RunPod-added ports
+                if str(port) not in port_labels and port == 19123:
+                    label = f"Port {port} [dim](RunPod Web Terminal - disabled by default)[/dim]"
+
                 # Health check with timeout
                 try:
                     import requests
