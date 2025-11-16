@@ -12,12 +12,15 @@ autopod automates the process of creating, managing, and accessing RunPod GPU po
 
 ## Features
 
-### V1.2 (Current) - ComfyUI Integration
-- **ComfyUI API Client** - Query ComfyUI status, system info, queue, history via HTTP API
-- **HTTP Proxy Access** - Access ComfyUI GUI via RunPod's HTTP proxy URLs
-- **Network Volume Support** - Attach RunPod network volumes for persistent model storage
-- **ComfyUI Commands** - `autopod comfy status` and `autopod comfy info`
-- **Tunnel Infrastructure** - SSH tunnel management groundwork (full support in V1.4)
+### V1.2 (Current) - HTTP Proxy & Template-Agnostic Design
+- **Flexible Port Exposure** - Expose any HTTP ports with custom labels (`--expose PORT:LABEL`)
+- **Template-Based Defaults** - Config-driven port templates for common Docker images
+- **HTTP Proxy Access** - Access web services via RunPod's HTTP proxy URLs (no SSH tunnel needed)
+- **Health Checks** - `autopod info` shows service URLs with live health status
+- **Network Volume Support** - Attach RunPod network volumes for persistent storage
+- **Template-Agnostic** - Works with any Docker template (ComfyUI, PyTorch, custom images)
+- **Ready-to-Use SSH Commands** - Copy-paste SSH commands from `autopod info`
+- **Tunnel Infrastructure** - Manual SSH tunnel management for advanced use cases
 - **All V1.1 Features** - Full backward compatibility with pod lifecycle management
 
 ### V1.1 Features
@@ -289,46 +292,46 @@ autopod kill abc-123 -y
 autopod connect --gpu "RTX 4090"
 ```
 
-### Using ComfyUI Web Interface
+### Using Web Services (ComfyUI, JupyterLab, etc.)
 
-Use HTTP proxy for browser-based ComfyUI access:
+Use HTTP proxy for browser-based access to any web service:
 
 ```bash
-# Create pod with ComfyUI exposed via HTTP proxy
-autopod connect --expose-comfyui --gpu "RTX A40"
+# Create pod with all template ports exposed via HTTP proxy
+autopod connect --expose-all --gpu "RTX A40"
 
-# Note the proxy URL from the output:
-# → ComfyUI: https://abc123xyz-8188.proxy.runpod.net
+# Get service URLs with health checks
+autopod info
 
-# Open the URL in your browser and use ComfyUI GUI
-# (Wait ~60 seconds for ComfyUI to fully start)
+# Output shows:
+# 🌐 HTTP Proxy Services:
+#   ✓ ComfyUI: https://abc123xyz-8188.proxy.runpod.net (online)
+#   ⏳ FileBrowser: https://abc123xyz-8080.proxy.runpod.net (timeout - may be starting)
+#   ✓ JupyterLab: https://abc123xyz-8888.proxy.runpod.net (online)
+#
+# 🔑 SSH Access:
+#   ssh abc123xyz-64411540@ssh.runpod.io -i ~/.ssh/id_ed25519
+
+# Open any URL in your browser
+# (Wait ~60-120 seconds for services to fully start)
 
 # When done, terminate immediately to save costs
 autopod kill abc-123 -y
 ```
 
-**Security Reminder:** HTTP proxy has no authentication. Anyone with the URL can access your ComfyUI instance. Terminate pods immediately when done to prevent unauthorized access and unnecessary charges.
-
-### Accessing ComfyUI via API (V1.2)
-
-Use the ComfyUI API client to check status and get system information:
-
+**Flexible Port Exposure:**
 ```bash
-# Create pod with ComfyUI exposed via HTTP proxy
-autopod connect --expose-comfyui --gpu "RTX A40"
+# Expose specific ports with custom labels
+autopod connect --expose 8188:myapp --expose 8080:admin
 
-# Check ComfyUI status with intelligent polling (waits up to 2 minutes)
-autopod comfy info
+# Expose single port (auto-labeled from config if available)
+autopod connect --expose 8188
 
-# Quick status check
-autopod comfy status
-
-# Open ComfyUI GUI in browser (use URL from comfy info output)
-# https://[pod-id]-8188.proxy.runpod.net
-
-# When done, terminate pod
-autopod kill -y
+# Expose all ports for a template (reads from config)
+autopod connect --expose-all
 ```
+
+**Security Reminder:** HTTP proxy has no authentication. Anyone with the URL can access your services. Terminate pods immediately when done to prevent unauthorized access and unnecessary charges.
 
 ---
 
@@ -346,8 +349,8 @@ Create and connect to a new pod
 - `--cloud-type <TYPE>` - SECURE, COMMUNITY, or ALL (default: SECURE)
 - `--volume-id <ID>` - Network volume ID to attach (for persistent storage)
 - `--volume-mount <PATH>` - Mount path for network volume (default: /workspace)
-- `--expose <PORT>` - Expose port via HTTP proxy (can be used multiple times)
-- `--expose-comfyui` - Convenience flag to expose port 8188 (ComfyUI)
+- `--expose <PORT[:LABEL]>` - Expose port via HTTP proxy with optional label (repeatable)
+- `--expose-all` - Expose all ports defined in config for this template
 - `--dry-run` - Show what would be created without creating
 - `--interactive` - Interactive mode with prompts (future)
 
@@ -363,14 +366,19 @@ Create pod with specific GPU:
 autopod connect --gpu "RTX A5000"
 ```
 
-Create pod with ComfyUI exposed:
+Create pod with all template ports exposed:
 ```bash
-autopod connect --expose-comfyui
+autopod connect --expose-all
 ```
 
-Create pod with multiple ports exposed (e.g., for ComfyUI template with FileBrowser and JupyterLab):
+Create pod with specific ports and custom labels:
 ```bash
-autopod connect --expose 8188 --expose 8080 --expose 8888
+autopod connect --expose 8188:ComfyUI --expose 8080:FileBrowser
+```
+
+Create pod with single port (auto-labeled from config if available):
+```bash
+autopod connect --expose 8188
 ```
 
 ---
@@ -379,16 +387,36 @@ autopod connect --expose 8188 --expose 8080 --expose 8888
 
 #### Port Exposure Overview
 
-By default, pods are not accessible from the internet. Use the `--expose` flag to expose specific ports through RunPod's HTTPS proxy, making services accessible from your browser.
+By default, pods are not accessible from the internet. Use the `--expose` or `--expose-all` flags to expose ports through RunPod's HTTPS proxy, making web services accessible from your browser.
 
 **Supported Flags:**
-- `--expose <PORT>` - Expose any port (repeatable for multiple ports)
-- `--expose-comfyui` - Shorthand for `--expose 8188`
+- `--expose <PORT[:LABEL]>` - Expose specific port with optional label (repeatable)
+- `--expose-all` - Expose all ports defined in config for the template
 
 **Common Ports (RunPod ComfyUI Template):**
 - `8188` - ComfyUI web interface
 - `8080` - FileBrowser (admin / adminadmin12)
 - `8888` - JupyterLab (token via JUPYTER_PASSWORD env var)
+
+**Port Templates in Config:**
+
+Add templates to `~/.autopod/config.json` for `--expose-all` support:
+
+```json
+{
+  "port_templates": {
+    "runpod/comfyui:latest": {
+      "8188": "ComfyUI",
+      "8080": "FileBrowser",
+      "8888": "JupyterLab"
+    },
+    "your/custom:template": {
+      "3000": "WebApp",
+      "8000": "API"
+    }
+  }
+}
+```
 
 **Security Notes:**
 - HTTP proxy has **no authentication by default**
@@ -399,14 +427,19 @@ By default, pods are not accessible from the internet. Use the `--expose` flag t
 
 **Examples:**
 
-Expose only ComfyUI:
+Expose all template ports:
 ```bash
-autopod connect --expose-comfyui
+autopod connect --expose-all
 ```
 
-Expose multiple services:
+Expose specific ports with custom labels:
 ```bash
-autopod connect --expose 8188 --expose 8080
+autopod connect --expose 8188:MyApp --expose 3000:WebUI
+```
+
+Expose single port (auto-labeled from config):
+```bash
+autopod connect --expose 8188
 ```
 
 ---
@@ -444,19 +477,19 @@ Terminate (destroy) a pod permanently
 ### SSH Tunnels
 
 **Note on V1.2 Changes:**
-- **Automatic tunneling has been disabled.** The `comfy` commands now use the RunPod HTTP proxy URL by default.
+- **Automatic tunneling has been disabled.** Web services are now accessed via RunPod HTTP proxy by default.
 - Tunnels must be managed manually using the commands below.
 - Full SSH tunnel support for pods with public IPs is planned for V1.4.
 
 **For V1.2, use the HTTP proxy instead of manual tunnels for GUI access:**
 ```bash
-# 1. Create a pod with the HTTP proxy enabled
-autopod connect --expose-comfyui
+# 1. Create a pod with HTTP proxy enabled
+autopod connect --expose-all
 
-# 2. Check ComfyUI status and get the proxy URL (waits up to 2 min)
-autopod comfy info
+# 2. Get service URLs with health checks
+autopod info
 
-# URLs are displayed in format: https://[pod-id]-8188.proxy.runpod.net
+# URLs are displayed in format: https://[pod-id]-[port].proxy.runpod.net
 ```
 
 #### `autopod tunnel start [POD_ID]`
@@ -475,43 +508,6 @@ Remove dead/stale tunnels from tracking.
 
 #### `autopod tunnel stop-all`
 Stop all active SSH tunnels managed by `autopod`. This is a useful kill-switch if you have multiple tunnels running.
-
----
-
-### ComfyUI Commands
-
-#### `autopod comfy status [POD_ID]`
-Check if ComfyUI is ready and responding on its proxy or tunnel URL.
-
-**Example:**
-```bash
-autopod comfy status
-```
-
-**Output:**
-```
-ComfyUI Information for pod abc-123
-  URL: https://abc-123-8188.proxy.runpod.net
-✓ ComfyUI is available.
-```
-
-#### `autopod comfy info [POD_ID]`
-Show the ComfyUI URL and detailed system information from the API.
-
-**Example:**
-```bash
-autopod comfy info
-```
-
-**Output:**
-```
-ComfyUI Information for pod abc-123
-  URL: https://abc-123-8188.proxy.runpod.net
-✓ ComfyUI is available.
-╭──────────── ComfyUI Info - abc-123 ────────────╮
-│ ... (detailed system stats) ...                │
-╰────────────────────────────────────────────────╯
-```
 
 ---
 
@@ -621,19 +617,19 @@ This is expected behavior - GPU availability is not guaranteed. Options:
 
 **Solution:** Use HTTP proxy instead:
 ```bash
-autopod connect --expose-http    # Create pod with HTTP proxy
-autopod comfy status              # Access ComfyUI via proxy
+autopod connect --expose-all     # Create pod with HTTP proxy
+autopod info                     # View service URLs with health checks
 ```
 
 SSH tunnels will be available in V1.4 when public IP pod support is added.
 
-**Symptom:** ComfyUI not responding via HTTP proxy
+**Symptom:** Web service not responding via HTTP proxy
 
 **Solutions:**
-1. ComfyUI takes ~60 seconds to start after pod creation
-2. Check ComfyUI status: `autopod comfy status`
-3. Verify pod was created with `--expose-http` flag
-4. Check the proxy URL in the pod creation output or `autopod info`
+1. Services take ~60-120 seconds to start after pod creation
+2. Check service health: `autopod info` (shows live health checks)
+3. Verify pod was created with `--expose-all` or `--expose PORT` flag
+4. Check the proxy URLs in the pod creation output or `autopod info`
 
 ---
 
@@ -665,11 +661,13 @@ python test_cli_integration.py
 - Configuration management
 - Rich terminal UI
 
-### V1.2 - ComfyUI Integration ✅
-- ComfyUI HTTP API client (status, info, system stats)
-- HTTP proxy access for ComfyUI GUI (via `--expose-http`)
+### V1.2 - HTTP Proxy & Template-Agnostic Design ✅
+- Flexible port exposure with custom labels (`--expose PORT:LABEL`)
+- Template-based port defaults (`--expose-all` reads from config)
+- HTTP proxy access for web services (no SSH tunnel needed)
+- Live health checks in `autopod info` command
+- Ready-to-use SSH commands displayed in output
 - Network volume support for persistent storage
-- ComfyUI commands (`autopod comfy status`, `autopod comfy info`)
 - Tunnel infrastructure (groundwork for V1.4, not functional in V1.2)
 
 ### V1.3 - Workflow Execution (Next)

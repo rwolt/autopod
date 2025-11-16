@@ -168,11 +168,11 @@ def config_init():
 @click.option("--template", type=str, help="Docker template (overrides config default)")
 @click.option("--cloud-type", type=click.Choice(["SECURE", "COMMUNITY", "ALL"], case_sensitive=False),
               help="Cloud type (default: SECURE)")
-@click.option("--expose", "expose_ports", multiple=True, type=int, help="Expose port via HTTP proxy (can be used multiple times)")
-@click.option("--expose-comfyui", is_flag=True, help="Convenience: expose port 8188 (ComfyUI)")
+@click.option("--expose", "expose_ports", multiple=True, type=str, help="Expose port via HTTP proxy. Format: PORT or PORT:LABEL (e.g., 8080:filebrowser)")
+@click.option("--expose-all", is_flag=True, help="Expose all ports defined in config for this template")
 @click.option("--dry-run", is_flag=True, help="Show what would be created without creating")
 @click.option("--interactive", is_flag=True, help="Interactive mode with prompts")
-def connect(gpu, gpu_count, disk_size, datacenter, volume_id, volume_mount, template, cloud_type, expose_ports, expose_comfyui, dry_run, interactive):
+def connect(gpu, gpu_count, disk_size, datacenter, volume_id, volume_mount, template, cloud_type, expose_ports, expose_all, dry_run, interactive):
     """Create and connect to a new pod.
 
     By default, uses GPU preferences from config with smart fallback.
@@ -180,8 +180,8 @@ def connect(gpu, gpu_count, disk_size, datacenter, volume_id, volume_mount, temp
     Examples:
         autopod connect                           # Use config preferences
         autopod connect --gpu "RTX A40"           # Specific GPU
-        autopod connect --expose-comfyui          # Expose ComfyUI (port 8188)
-        autopod connect --expose 8188 --expose 8080  # Expose multiple ports
+        autopod connect --expose-all              # Expose all template ports
+        autopod connect --expose 8188 --expose 8080:filebrowser  # Expose specific ports
         autopod connect --dry-run                 # Preview without creating
         autopod connect --interactive             # Interactive prompts
     """
@@ -238,16 +238,51 @@ def connect(gpu, gpu_count, disk_size, datacenter, volume_id, volume_mount, temp
             pod_config["volume_id"] = volume_id_value
             pod_config["volume_mount"] = volume_mount_value
 
-        # Build port exposure list
-        ports_to_expose = list(expose_ports) if expose_ports else []
-        if expose_comfyui and 8188 not in ports_to_expose:
-            ports_to_expose.append(8188)
+        # Parse port exposure with optional labels
+        # Format: "8188" or "8080:filebrowser"
+        port_map = {}  # {port_number: label or None}
 
-        # Add HTTP port exposure if any ports specified
-        if ports_to_expose:
-            # Format: "8188/http,8080/http,8888/http"
-            port_strings = [f"{port}/http" for port in sorted(ports_to_expose)]
+        # Get template name and port templates from config
+        template_name = pod_config["template"]
+        port_templates = config.get("port_templates", {})
+        template_ports = port_templates.get(template_name, {})
+
+        # Handle --expose-all flag
+        if expose_all:
+            if template_ports:
+                # Add all ports from template config
+                for port_str, label in template_ports.items():
+                    port_map[int(port_str)] = label
+                console.print(f"[dim]Exposing all ports for template '{template_name}': {', '.join(template_ports.keys())}[/dim]")
+            else:
+                console.print(f"[yellow]Warning: No ports defined for template '{template_name}' in config[/yellow]")
+                console.print("[dim]Add to ~/.autopod/config.json 'port_templates' or use --expose PORT[/dim]")
+
+        # Parse user-provided --expose flags (these override template defaults)
+        for port_spec in (expose_ports or []):
+            if ":" in port_spec:
+                port_str, label = port_spec.split(":", 1)
+                try:
+                    port = int(port_str)
+                    port_map[port] = label
+                except ValueError:
+                    console.print(f"[yellow]Warning: Invalid port number '{port_str}', skipping[/yellow]")
+            else:
+                try:
+                    port = int(port_spec)
+                    # Auto-label from template if available
+                    auto_label = template_ports.get(str(port))
+                    port_map[port] = auto_label
+                except ValueError:
+                    console.print(f"[yellow]Warning: Invalid port number '{port_spec}', skipping[/yellow]")
+
+        # Build RunPod ports string and metadata
+        if port_map:
+            # Format for RunPod API: "8188/http,8080/http,8888/http"
+            port_strings = [f"{port}/http" for port in sorted(port_map.keys())]
             pod_config["ports"] = ",".join(port_strings)
+            # Store port labels in metadata for later retrieval
+            pod_config["port_labels"] = {p: lbl for p, lbl in port_map.items() if lbl}
 
         # Show configuration
         console.print("\n[bold cyan]Pod Configuration:[/bold cyan]")
@@ -259,14 +294,19 @@ def connect(gpu, gpu_count, disk_size, datacenter, volume_id, volume_mount, temp
             console.print(f"  Datacenter: {datacenter_value}")
         if volume_id_value:
             console.print(f"  Volume:     {volume_id_value} → {volume_mount_value}")
-        if ports_to_expose:
-            ports_display = ", ".join(str(p) for p in sorted(ports_to_expose))
-            console.print(f"  HTTP Ports: [yellow]{ports_display} (exposed via HTTP proxy)[/yellow]")
+        if port_map:
+            console.print(f"  HTTP Ports: [yellow]{len(port_map)} port(s) exposed via HTTP proxy[/yellow]")
+            for port in sorted(port_map.keys()):
+                label = port_map[port]
+                if label:
+                    console.print(f"    • {port} ({label})")
+                else:
+                    console.print(f"    • {port}")
 
         # Show security warning if exposing HTTP
-        if ports_to_expose:
+        if port_map:
             console.print("\n[bold yellow]⚠️  Security Warning:[/bold yellow]")
-            console.print(f"[yellow]{len(ports_to_expose)} port(s) will be accessible via RunPod HTTP proxy.[/yellow]")
+            console.print(f"[yellow]{len(port_map)} port(s) will be accessible via RunPod HTTP proxy.[/yellow]")
             console.print("[dim]• Anyone with the URL can access these services (no authentication)[/dim]")
             console.print("[dim]• URL format: https://[pod-id]-[port].proxy.runpod.net[/dim]")
             console.print("[dim]• Traffic is HTTPS encrypted but RunPod can inspect it[/dim]")
@@ -327,14 +367,14 @@ def connect(gpu, gpu_count, disk_size, datacenter, volume_id, volume_mount, temp
 
         console.print(f"\n[green]✓ Pod created successfully: {pod_id}[/green]")
 
-        # Show HTTP proxy URLs for all exposed ports
-        if ports_to_expose:
+        # Show HTTP proxy URLs for all exposed ports with labels
+        if port_map:
             console.print(f"\n[bold]🌐 HTTP Proxy Access:[/bold]")
-            for port in sorted(ports_to_expose):
+            for port in sorted(port_map.keys()):
                 http_url = f"https://{pod_id}-{port}.proxy.runpod.net"
-                # Only label port 8188 as ComfyUI if user explicitly used --expose-comfyui
-                if port == 8188 and expose_comfyui:
-                    console.print(f"  ComfyUI: [cyan]{http_url}[/cyan]")
+                label = port_map[port]
+                if label:
+                    console.print(f"  {label}: [cyan]{http_url}[/cyan]")
                 else:
                     console.print(f"  Port {port}: [cyan]{http_url}[/cyan]")
             console.print(f"  [dim](Services may take 30-60s to start)[/dim]")
@@ -402,7 +442,10 @@ def ps_alias():
 @cli.command()
 @click.argument("pod_id", required=False)
 def info(pod_id):
-    """Show detailed information about a pod.
+    """Show comprehensive information about a pod.
+
+    Displays pod status, HTTP proxy URLs with health checks, SSH access,
+    and volume information. Works with any Docker template.
 
     If pod_id is not provided and only one pod exists, it will be auto-selected.
 
@@ -411,6 +454,7 @@ def info(pod_id):
         autopod info                 # Auto-select if only one pod
     """
     try:
+        config = load_config()
         provider = load_provider()
         manager = PodManager(provider, console)
 
@@ -421,7 +465,119 @@ def info(pod_id):
                 sys.exit(1)
             console.print(f"[dim]Auto-selected pod: {pod_id}[/dim]\n")
 
-        manager.get_pod_info(pod_id, show_panel=True)
+        # Get pod status from provider
+        status = provider.get_pod_status(pod_id)
+        if not status:
+            console.print(f"[red]✗ Pod {pod_id} not found[/red]")
+            console.print("[dim]Run 'autopod ls' to see available pods.[/dim]")
+            sys.exit(1)
+
+        # Get raw pod data for port information
+        import runpod
+        pod_data = runpod.get_pod(pod_id)
+        if not pod_data:
+            console.print(f"[red]✗ Pod {pod_id} not found.[/red]")
+            sys.exit(1)
+
+        # Get metadata with port labels
+        metadata = provider._load_pod_metadata(pod_id)
+        port_labels = metadata.get("port_labels", {})
+
+        # Build info display
+        pod_status = status.get("status", "UNKNOWN")
+        gpu_count = status.get("gpu_count", 0)
+        gpu_type = status.get("gpu_type", "Unknown GPU")
+        cost_per_hour = status.get("cost_per_hour", 0.0)
+        runtime_minutes = status.get("runtime_minutes", 0.0)
+        total_cost = status.get("total_cost", 0.0)
+
+        # Format GPU display
+        if gpu_count > 0:
+            gpu_display = f"{gpu_count}x {gpu_type}"
+        else:
+            gpu_display = "N/A"
+
+        # Basic pod information
+        info_lines = [
+            f"[bold]Status:[/bold]       {pod_status}",
+            f"[bold]GPU:[/bold]          {gpu_display}",
+            f"[bold]Cost/hour:[/bold]    ${cost_per_hour:.2f}",
+            f"[bold]Runtime:[/bold]      {runtime_minutes:.1f} minutes",
+            f"[bold]Total cost:[/bold]   ${total_cost:.4f}",
+        ]
+
+        # Get exposed ports from runtime
+        exposed_ports = []
+        runtime = pod_data.get("runtime", {})
+        if runtime and "ports" in runtime:
+            for p in runtime["ports"]:
+                port = p.get("privatePort")
+                if p.get("ip") == "0.0.0.0" and port:
+                    exposed_ports.append(port)
+
+        # Show HTTP proxy services with health checks
+        if exposed_ports:
+            info_lines.append("")
+            info_lines.append("[bold]🌐 HTTP Proxy Services:[/bold]")
+
+            for port in sorted(exposed_ports):
+                url = f"https://{pod_id}-{port}.proxy.runpod.net"
+                label = port_labels.get(str(port), f"Port {port}")
+
+                # Health check with timeout
+                try:
+                    import requests
+                    response = requests.get(url, timeout=3)
+                    if response.status_code < 400:
+                        info_lines.append(f"  ✓ {label}: [cyan]{url}[/cyan] [dim](online)[/dim]")
+                    else:
+                        info_lines.append(f"  ✗ {label}: [cyan]{url}[/cyan] [yellow](error {response.status_code})[/yellow]")
+                except requests.Timeout:
+                    info_lines.append(f"  ⏳ {label}: [cyan]{url}[/cyan] [dim](timeout - may be starting)[/dim]")
+                except requests.ConnectionError:
+                    info_lines.append(f"  ⏳ {label}: [cyan]{url}[/cyan] [dim](not ready yet)[/dim]")
+                except Exception as e:
+                    info_lines.append(f"  ? {label}: [cyan]{url}[/cyan] [dim](check failed: {e})[/dim]")
+
+        # Show volume info if available
+        if status.get("volume_id"):
+            volume_id = status.get("volume_id")
+            volume_mount = status.get("volume_mount", "/workspace")
+            info_lines.append("")
+            info_lines.append(f"[bold]📁 Volume:[/bold]       {volume_id} → {volume_mount}")
+
+        # Show ready-to-use SSH command
+        if status.get("ssh_ready"):
+            ssh_key = config["providers"]["runpod"]["ssh_key_path"]
+            conn_string = provider.get_ssh_connection_string(pod_id)
+
+            info_lines.append("")
+            info_lines.append("[bold]🔑 SSH Access:[/bold]")
+            info_lines.append(f"  [dim]# Copy and paste this command:[/dim]")
+            info_lines.append(f"  [cyan]ssh {conn_string} -i {ssh_key}[/cyan]")
+        else:
+            info_lines.append("")
+            info_lines.append("[bold]SSH:[/bold]          Not ready")
+
+        info_text = "\n".join(info_lines)
+
+        # Color code panel based on status
+        if pod_status == "RUNNING":
+            border_style = "green"
+        elif pod_status == "STOPPED":
+            border_style = "yellow"
+        elif pod_status == "TERMINATED":
+            border_style = "red"
+        else:
+            border_style = "dim"
+
+        panel = Panel(
+            info_text,
+            title=f"[bold]Pod Information: {pod_id}[/bold]",
+            border_style=border_style,
+        )
+
+        console.print(panel)
 
     except Exception as e:
         console.print(f"[red]✗ Failed to get pod info: {e}[/red]")
@@ -1004,261 +1160,7 @@ def tunnel_stop_all(yes):
         sys.exit(1)
 
 
-# ============================================================================
-# ComfyUI Management Commands
-# ============================================================================
-
-
-@cli.group()
-def comfy():
-    """Manage ComfyUI on pods."""
-    pass
-
-
-@comfy.command("status")
-@click.argument("pod_id", required=False)
-def comfy_status(pod_id):
-    """Check if ComfyUI is ready and responding.
-
-    Returns exit code 0 if ready, 1 if not ready.
-
-    Example:
-        autopod comfy status pod-abc       # Check specific pod
-        autopod comfy status               # Auto-select if only one pod
-    """
-    try:
-        provider = load_provider()
-        manager = PodManager(provider, console)
-
-        # Auto-select if no pod_id provided
-        if not pod_id:
-            pod_id = get_single_pod_id(manager)
-            if not pod_id:
-                sys.exit(1)
-            console.print(f"[dim]Auto-selected pod: {pod_id}[/dim]\n")
-
-        # Get raw pod data to determine the correct URL
-        import runpod
-        pod_data = runpod.get_pod(pod_id)
-        if not pod_data:
-            console.print(f"[red]✗ Pod {pod_id} not found.[/red]")
-            sys.exit(1)
-
-        # Determine the URL for ComfyUI
-        comfy_url = None
-        runtime = pod_data.get("runtime", {})
-        if runtime and "ports" in runtime:
-            for p in runtime["ports"]:
-                if p.get("privatePort") == 8188 and p.get("ip") == "0.0.0.0":
-                    comfy_url = f"https://{pod_id}-8188.proxy.runpod.net"
-                    break
-        
-        if not comfy_url:
-            comfy_url = "http://localhost:8188"
-
-        console.print(f"[bold]Checking ComfyUI status for pod {pod_id}[/bold]")
-        console.print(f"  [cyan]URL:[/cyan] {comfy_url}")
-
-        # Create ComfyUI client
-        client = ComfyUIClient(base_url=comfy_url)
-
-        # Check if ready (quick check, no extended polling for status command)
-        with Status("[yellow]Checking ComfyUI status...[/yellow]", console=console) as status:
-            if client.is_ready(max_retries=2, retry_delay=1.0):
-                status.update("[green]✓ ComfyUI is ready.[/green]")
-                sys.exit(0)
-            else:
-                status.update("[red]✗ ComfyUI is not responding.[/red]")
-                console.print("[dim]  If the pod just started, try `autopod comfy info` for extended polling.[/dim]")
-                sys.exit(1)
-
-    except Exception as e:
-        console.print(f"\n[red]✗ Error checking ComfyUI status: {e}[/red]")
-        logger.exception("ComfyUI status check failed")
-        sys.exit(1)
-
-
-@comfy.command("info")
-@click.argument("pod_id", required=False)
-def comfy_info(pod_id):
-    """Show detailed ComfyUI information and status.
-
-    Displays the ComfyUI URL, checks for service availability, and shows
-    system stats, queue info, and available endpoints.
-
-    Example:
-        autopod comfy info pod-abc         # Show info for specific pod
-        autopod comfy info                 # Auto-select if only one pod
-    """
-    try:
-        provider = load_provider()
-        manager = PodManager(provider, console)
-
-        # Auto-select if no pod_id provided
-        if not pod_id:
-            pod_id = get_single_pod_id(manager)
-            if not pod_id:
-                sys.exit(1)
-            console.print(f"[dim]Auto-selected pod: {pod_id}[/dim]\n")
-
-        # Get raw pod data to determine the correct URL
-        # This is a temporary solution until get_pod_status returns port info
-        import runpod
-        pod_data = runpod.get_pod(pod_id)
-        if not pod_data:
-            console.print(f"[red]✗ Pod {pod_id} not found.[/red]")
-            sys.exit(1)
-
-        # Determine exposed ports and URLs
-        comfy_url = None
-        exposed_ports = []
-        runtime = pod_data.get("runtime", {})
-        if runtime and "ports" in runtime:
-            for p in runtime["ports"]:
-                port = p.get("privatePort")
-                if p.get("ip") == "0.0.0.0" and port:
-                    exposed_ports.append(port)
-                    if port == 8188:
-                        comfy_url = f"https://{pod_id}-8188.proxy.runpod.net"
-
-        if not comfy_url:
-            # Default to localhost if not exposed via proxy
-            comfy_url = "http://localhost:8188"
-
-        console.print(f"[bold]ComfyUI Information for pod {pod_id}[/bold]")
-
-        # Show all exposed HTTP proxy URLs
-        if exposed_ports:
-            console.print(f"\n[bold cyan]Exposed HTTP Proxy URLs:[/bold cyan]")
-            for port in sorted(exposed_ports):
-                url = f"https://{pod_id}-{port}.proxy.runpod.net"
-                console.print(f"  Port {port}: [cyan]{url}[/cyan]")
-        else:
-            console.print(f"  [yellow]No ports exposed via HTTP proxy[/yellow]")
-            console.print(f"  [dim]Use SSH tunnel or restart pod with --expose-comfyui[/dim]")
-
-        # Show the ComfyUI URL specifically (for backward compat)
-        console.print(f"\n[bold cyan]ComfyUI URL:[/bold cyan]")
-        console.print(f"  {comfy_url}")
-
-        # Create ComfyUI client
-        client = ComfyUIClient(base_url=comfy_url)
-
-        # Poll for ComfyUI readiness (can take up to 2 minutes)
-        max_wait_seconds = 120  # 2 minutes max
-        poll_interval = 3  # Check every 3 seconds
-        start_time = time.time()
-
-        is_ready = False
-        with Status("[yellow]Waiting for ComfyUI to start...[/yellow]", console=console) as status:
-            while time.time() - start_time < max_wait_seconds:
-                elapsed = int(time.time() - start_time)
-                status.update(f"[yellow]⏳ Waiting for ComfyUI to start... ({elapsed}s elapsed)[/yellow]")
-
-                if client.is_ready(max_retries=1, retry_delay=0):
-                    is_ready = True
-                    status.update("[green]✓ ComfyUI is online![/green]")
-                    break
-
-                time.sleep(poll_interval)
-
-            if not is_ready:
-                status.update(f"[red]✗ ComfyUI did not respond after {max_wait_seconds}s[/red]")
-                console.print("[dim]  The service may be taking longer than expected to start, or there might be an issue.[/dim]")
-                console.print(f"[dim]  Try checking the pod logs or waiting a bit longer before retrying.[/dim]")
-                sys.exit(1)
-
-        # Fetch all info
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console
-        ) as progress:
-            task = progress.add_task("Fetching system stats...", total=None)
-            stats = client.get_system_stats()
-
-            progress.update(task, description="Fetching queue info...")
-            queue = client.get_queue_info()
-
-            progress.update(task, description="Fetching object info...")
-            objects = client.get_object_info()
-
-        # Build info display
-        info_text = ""
-
-        # System info
-        if stats and "system" in stats:
-            system = stats["system"]
-            info_text += "[bold cyan]System Information:[/bold cyan]\n"
-            if "os" in system:
-                info_text += f"  OS: {system['os']}\n"
-            if "python_version" in system:
-                info_text += f"  Python: {system['python_version']}\n"
-            if "ram_total" in system:
-                ram_gb = system["ram_total"] / (1024**3)
-                ram_free_gb = system.get("ram_free", 0) / (1024**3)
-                info_text += f"  RAM: {ram_free_gb:.1f} GB free / {ram_gb:.1f} GB total\n"
-            info_text += "\n"
-
-        # GPU devices
-        if stats and "devices" in stats and len(stats["devices"]) > 0:
-            info_text += "[bold cyan]GPU Devices:[/bold cyan]\n"
-            for i, device in enumerate(stats["devices"]):
-                device_name = device.get("name", "Unknown")
-                info_text += f"  Device {i}: {device_name}\n"
-                if "type" in device:
-                    info_text += f"    Type: {device['type']}\n"
-                if "vram_total" in device:
-                    vram_gb = device["vram_total"] / (1024**3)
-                    vram_free_gb = device.get("vram_free", 0) / (1024**3)
-                    info_text += f"    VRAM: {vram_free_gb:.1f} GB free / {vram_gb:.1f} GB total\n"
-            info_text += "\n"
-
-        # Queue info
-        if queue:
-            info_text += "[bold cyan]Queue Status:[/bold cyan]\n"
-            running_count = len(queue.get("queue_running", []))
-            pending_count = len(queue.get("queue_pending", []))
-            info_text += f"  Running jobs: {running_count}\n"
-            info_text += f"  Pending jobs: {pending_count}\n"
-            info_text += "\n"
-
-        # Available nodes
-        if objects:
-            info_text += "[bold cyan]Available Nodes:[/bold cyan]\n"
-            info_text += f"  Total node types: {len(objects)}\n"
-
-            # Sample a few common nodes
-            common_nodes = ["LoadImage", "SaveImage", "KSampler", "CheckpointLoaderSimple", "CLIPTextEncode"]
-            available_common = [node for node in common_nodes if node in objects]
-
-            if available_common:
-                info_text += f"  Common nodes available: {', '.join(available_common[:5])}\n"
-
-            info_text += "\n"
-
-        # API endpoints
-        info_text += "[bold cyan]API Endpoints:[/bold cyan]\n"
-        info_text += f"  Base URL: {comfy_url}\n"
-        info_text += "  GET  /system_stats - System and GPU info\n"
-        info_text += "  GET  /queue - Queue status\n"
-        info_text += "  GET  /history - Execution history\n"
-        info_text += "  GET  /object_info - Available nodes\n"
-        info_text += "  POST /prompt - Submit workflow (V1.3+)\n"
-        info_text += "  POST /upload/image - Upload files (V1.3+)\n"
-        info_text += "  GET  /view - Download outputs (V1.3+)\n"
-        info_text += "  WS   /ws - WebSocket monitoring (V2.0+)\n"
-
-        console.print(Panel(
-            info_text,
-            title=f"[bold cyan]ComfyUI Info - {pod_id}[/bold cyan]",
-            border_style="cyan"
-        ))
-
-    except Exception as e:
-        console.print(f"\n[red]✗ Error fetching ComfyUI info: {e}[/red]")
-        logger.exception("ComfyUI info fetch failed")
-        sys.exit(1)
+# Removed ComfyUI-specific commands - use `autopod info` instead
 
 
 def main():

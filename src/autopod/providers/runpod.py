@@ -432,12 +432,15 @@ class RunPodProvider(CloudProvider):
 
             logger.info(f"Pod created successfully: {pod_id}, podHostId: {pod_host_id}")
 
-            # Store pod metadata for SSH access and volume info
+            # Store pod metadata for SSH access, volume info, and exposed ports
             if pod_host_id:
                 metadata = {"pod_host_id": pod_host_id}
                 if volume_id:
                     metadata["volume_id"] = volume_id
                     metadata["volume_mount"] = volume_mount
+                # Store exposed ports for easy retrieval
+                if "ports" in config:
+                    metadata["exposed_ports"] = config["ports"]
                 self._save_pod_metadata(pod_id, metadata)
 
             return pod_id
@@ -483,13 +486,12 @@ class RunPodProvider(CloudProvider):
             cost_per_hour = pod.get("costPerHr", 0.0)
             machine_id = pod.get("machineId", "")
 
-            # Calculate runtime and cost
+            # Calculate runtime and cost from createdAt timestamp
             runtime_minutes = 0.0
             total_cost = 0.0
 
-            # Try multiple timestamp fields for compatibility
             if "createdAt" in pod and pod["createdAt"]:
-                # Parse ISO 8601 timestamp (RunPod GraphQL API format)
+                # Parse ISO 8601 timestamp (RunPod GraphQL API standard format)
                 try:
                     from datetime import datetime
                     created_at = datetime.fromisoformat(pod["createdAt"].replace('Z', '+00:00'))
@@ -499,13 +501,8 @@ class RunPodProvider(CloudProvider):
                     logger.debug(f"Runtime calculated from createdAt: {runtime_minutes:.2f} minutes")
                 except (ValueError, AttributeError) as e:
                     logger.warning(f"Failed to parse createdAt timestamp: {e}")
-            elif "creationTimeMillis" in pod:
-                # Fallback to milliseconds format (if available)
-                current_time_millis = int(time.time() * 1000)
-                creation_time_millis = pod["creationTimeMillis"]
-                runtime_minutes = (current_time_millis - creation_time_millis) / 1000 / 60
-                total_cost = (runtime_minutes / 60.0) * cost_per_hour
-                logger.debug(f"Runtime calculated from creationTimeMillis: {runtime_minutes:.2f} minutes")
+            else:
+                logger.warning(f"Pod {pod_id} missing createdAt field, runtime calculation unavailable")
 
             # RunPod SSH connection details
             # RunPod uses SSH proxy at ssh.runpod.io, NOT direct port mapping

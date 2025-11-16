@@ -61,6 +61,27 @@ def get_default_config() -> Dict:
         "defaults": {
             "gpu_preferences": ["RTX A40", "RTX A6000", "RTX A5000"],
             "gpu_count": 1
+        },
+        # Port Templates: Define HTTP ports and labels for templates
+        # - Used by --expose-all flag to expose all ports for a template
+        # - Used by --expose PORT to auto-label ports (e.g., --expose 8188 gets "ComfyUI" label)
+        # - Format: "template-name": {"port": "Label", ...}
+        # - Add your custom templates here
+        # Example usage:
+        #   autopod connect --template runpod/comfyui:latest --expose-all
+        #   autopod connect --expose 8188 --expose 8080:myapp
+        "port_templates": {
+            "runpod/comfyui:latest": {
+                "8188": "ComfyUI",
+                "8080": "FileBrowser",
+                "8888": "JupyterLab"
+            },
+            "runpod/pytorch:latest": {
+                "8888": "JupyterLab"
+            },
+            "runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04": {
+                "8888": "JupyterLab"
+            }
         }
     }
 
