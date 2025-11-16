@@ -150,502 +150,58 @@ Show version information
 
 ---
 
-### Configuration
+## Configuration
 
-#### `autopod config init`
-Run interactive configuration wizard
+Configuration is stored in `~/.autopod/config.json` with chmod 600 (secure).
 
-**Example:**
+### Configuration File Structure
+
+```json
+{
+  "providers": {
+    "runpod": {
+      "api_key": "your-api-key-here",
+      "ssh_key_path": "/Users/you/.ssh/id_ed25519",
+      "default_template": "runpod/comfyui:latest",
+      "default_region": "NA-US",
+      "cloud_type": "SECURE",
+      "default_volume_id": "",
+      "default_volume_mount": "/workspace"
+    }
+  },
+  "defaults": {
+    "gpu_preferences": ["RTX A40", "RTX A6000", "RTX A5000"],
+    "gpu_count": 1
+  }
+}
+```
+
+### GPU Selection Hierarchy
+
+`autopod` selects a GPU in the following order of priority:
+
+1.  **Command-Line Flag:** A GPU specified with `autopod connect --gpu "TYPE"` will always be used.
+2.  **Configuration File:** If no flag is provided, `autopod` uses the first GPU from the `gpu_preferences` list in your `~/.autopod/config.json` file.
+3.  **Hardcoded Default:** If no configuration file is found, `autopod` falls back to a default list: `["RTX A40", "RTX A6000", "RTX A5000"]`.
+
+If the first choice GPU is not available, `autopod` will automatically try the next GPU in the preference list.
+
+### Editing Configuration
+
+You can manually edit the config file:
+
+```bash
+# macOS
+open ~/.autopod/config.json
+
+# Linux
+nano ~/.autopod/config.json
+```
+
+Or re-run the wizard at any time:
+
 ```bash
 autopod config init
-```
-
-Sets up RunPod API key, SSH key, and GPU preferences.
-
----
-
-### Pod Creation
-
-#### `autopod connect`
-Create and connect to a new pod
-
-**Options:**
-- `--gpu <TYPE>` - GPU type (e.g., 'RTX A40', 'RTX A5000')
-- `--gpu-count <N>` - Number of GPUs (default: 1)
-- `--disk-size <GB>` - Disk size in GB (default: 50)
-- `--datacenter <ID>` - Datacenter region (e.g., 'CA-MTL-1', 'US-GA-1')
-- `--template <NAME>` - Docker template (overrides config default)
-- `--cloud-type <TYPE>` - SECURE, COMMUNITY, or ALL (default: SECURE)
-- `--volume-id <ID>` - Network volume ID to attach (for persistent storage)
-- `--volume-mount <PATH>` - Mount path for network volume (default: /workspace)
-- `--dry-run` - Show what would be created without creating
-- `--interactive` - Interactive mode with prompts (future)
-
-**Examples:**
-
-Create pod with default GPU preferences:
-```bash
-autopod connect
-```
-
-Create pod with specific GPU:
-```bash
-autopod connect --gpu "RTX A5000"
-```
-
-Create pod with multiple GPUs and larger disk:
-```bash
-autopod connect --gpu "RTX A40" --gpu-count 2 --disk-size 100
-```
-
-Create pod in specific datacenter:
-```bash
-autopod connect --datacenter CA-MTL-1
-```
-
-Create pod with network volume (for persistent model storage):
-```bash
-autopod connect --volume-id abc123xyz --volume-mount /workspace
-```
-
-Preview without creating:
-```bash
-autopod connect --dry-run
-```
-
-**Smart GPU Selection:**
-- If no `--gpu` specified, uses first preference from config
-- Automatically falls back to second and third preferences if unavailable
-- Example preferences: RTX A40 → RTX A6000 → RTX A5000
-
----
-
-### HTTP Port Exposure
-
-#### `autopod connect --expose-http`
-Expose ComfyUI HTTP port (8188) via RunPod's HTTP proxy
-
-By default, pods are not accessible from the internet. The `--expose-http` flag exposes port 8188 through RunPod's HTTPS proxy, making ComfyUI's web interface accessible from your browser.
-
-**Examples:**
-
-Create pod with HTTP proxy enabled:
-```bash
-autopod connect --expose-http
-```
-
-**Access URL format:**
-```
-https://[pod-id]-8188.proxy.runpod.net
-```
-
-Example:
-```bash
-autopod connect --expose-http --gpu "RTX A40"
-# After pod creation:
-# → Visit: https://abc123xyz-8188.proxy.runpod.net
-```
-
-**Security Considerations:**
-
-⚠️ **Important:** When using `--expose-http`, be aware of these security implications:
-
-- **No Authentication:** Anyone with the URL can access your ComfyUI instance
-- **Public Access:** The proxy URL is publicly accessible on the internet
-- **Traffic Inspection:** RunPod can technically inspect HTTPS traffic (though it's encrypted in transit)
-- **Exposed Workflows:** Your ComfyUI workflows and generated content are accessible to anyone with the URL
-
-**Recommended Security Practices:**
-
-1. **Terminate When Not in Use:**
-   ```bash
-   autopod kill [pod-id] -y    # Stop charges and remove access
-   ```
-
-2. **Use Stop for Breaks:**
-   ```bash
-   autopod stop [pod-id]       # Pauses pod, removes HTTP access
-   ```
-
-3. **Keep URLs Private:** Don't share the proxy URL in public places
-
-4. **Monitor Costs:** HTTP-exposed pods should be terminated promptly to avoid unnecessary charges
-
-**When to Use HTTP Proxy:**
-
-- ✅ Quick testing and development
-- ✅ Short-lived workflows (terminate immediately after)
-- ✅ Non-sensitive projects
-- ✅ When you need browser GUI access
-
-**When NOT to Use:**
-
-- ❌ Production workloads with sensitive data
-- ❌ Long-running pods left unattended
-- ❌ Processing confidential/private content
-- ❌ When security is a primary concern
-
-**Read More:**
-- [RunPod Port Exposure Documentation](https://docs.runpod.io/pods/configuration/expose-ports)
-
----
-
-### Pod Listing & Information
-
-#### `autopod list` (aliases: `ls`, `ps`)
-List all pods with status, GPU, runtime, and cost
-
-**Options:**
-- `--all` - Show all pods including non-autopod (future)
-
-**Example:**
-```bash
-autopod list
-```
-
-**Output:**
-```
-┏━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┓
-┃ Pod ID       ┃ Status    ┃ GPU        ┃ Runtime   ┃ Cost      ┃
-┡━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━┩
-│ abc-123      │ RUNNING   │ 1x RTX A40 │ 12.3 min  │ $0.0821   │
-│ def-456      │ STOPPED   │ 1x RTX A40 │ 45.2 min  │ $0.3014   │
-└──────────────┴───────────┴────────────┴───────────┴───────────┘
-```
-
-Aliases work identically:
-```bash
-autopod ls    # Short alias
-autopod ps    # Docker-like alias
-```
-
-#### `autopod info [POD_ID]`
-Show detailed information about a specific pod
-
-**Arguments:**
-- `[POD_ID]` - Optional pod ID (auto-selects if only one pod exists)
-
-**Examples:**
-
-Get info for specific pod:
-```bash
-autopod info abc-123
-```
-
-Auto-select when only one pod:
-```bash
-autopod info
-```
-
-**Output:**
-```
-╭─── Pod: abc-123 ────────────────────────────────╮
-│ Status:       RUNNING                           │
-│ GPU:          1x RTX A40                        │
-│ Cost/hour:    $0.40                             │
-│ Runtime:      12.3 minutes                      │
-│ Total cost:   $0.0821                           │
-│ SSH:          Ready (ssh.runpod.io)             │
-╰─────────────────────────────────────────────────╯
-```
-
----
-
-### SSH Access
-
-#### `autopod ssh [POD_ID]` (alias: `shell`)
-Open interactive SSH shell on a pod
-
-**Arguments:**
-- `[POD_ID]` - Optional pod ID (auto-selects if only one pod exists)
-
-**Examples:**
-
-Interactive shell (auto-select):
-```bash
-autopod ssh
-```
-
-Interactive shell (specific pod):
-```bash
-autopod ssh abc-123
-```
-
-**Alias:**
-```bash
-autopod shell abc-123    # Same as 'ssh'
-```
-
-**Note:** RunPod's proxied SSH does not support command execution (`-c` flag) or port forwarding. Only interactive shell sessions are supported.
-
----
-
-### Pod Control
-
-#### `autopod stop [POD_ID]`
-Stop (pause) a pod
-
-Stopped pods reduce compute charges from ~$0.40/hr to ~$0.02/hr while retaining disk state. You can restart them later with `autopod start`.
-
-**Arguments:**
-- `[POD_ID]` - Optional pod ID (auto-selects if only one pod exists)
-
-**Examples:**
-
-Stop specific pod:
-```bash
-autopod stop abc-123
-```
-
-Stop the only running pod:
-```bash
-autopod stop
-```
-
-#### `autopod start [POD_ID]` (alias: `resume`)
-Start (resume) a stopped pod
-
-Resumes a previously stopped pod. **Note:** GPU availability is not guaranteed - the pod may restart with a different GPU type or as CPU-only if the original GPU is unavailable.
-
-**Arguments:**
-- `[POD_ID]` - Optional pod ID (auto-selects if only one pod exists)
-
-**Examples:**
-
-Start specific pod:
-```bash
-autopod start abc-123
-```
-
-Start with auto-select:
-```bash
-autopod start
-```
-
-**Alias:**
-```bash
-autopod resume abc-123    # Same as 'start'
-```
-
-**Output:**
-```bash
-✓ Pod abc-123 started successfully
-⚠ GPU availability not guaranteed - check pod info to verify GPU type
-
-Checking pod status...
-╭─── Pod: abc-123 ────────────────────────────────╮
-│ Status:       RUNNING                           │
-│ GPU:          1x RTX A40                        │  ← Verify GPU type
-│ Cost/hour:    $0.40                             │
-│ Runtime:      0.1 minutes                       │
-│ Total cost:   $0.0007                           │
-│ SSH:          Ready (ssh.runpod.io)             │
-╰─────────────────────────────────────────────────╯
-```
-
-#### `autopod kill [POD_ID]` (aliases: `terminate`, `rm`)
-Terminate (destroy) a pod permanently
-
-**WARNING:** This is destructive and cannot be undone. All data on the pod will be lost unless saved to a network volume.
-
-**Arguments:**
-- `[POD_ID]` - Optional pod ID (auto-selects if only one pod exists)
-
-**Options:**
-- `-y, --yes` - Skip confirmation prompt
-
-**Examples:**
-
-Terminate with confirmation:
-```bash
-autopod kill abc-123
-```
-
-Skip confirmation:
-```bash
-autopod kill abc-123 -y
-```
-
-Auto-select:
-```bash
-autopod kill
-```
-
-**Aliases:**
-```bash
-autopod terminate abc-123    # Explicit name
-autopod rm abc-123           # Docker-like alias
-```
-
----
-
-### SSH Tunnels
-
-**Note:** SSH tunnel commands are available in V1.2, but **do not currently work** due to RunPod's proxied SSH limitations. RunPod's `ssh.runpod.io` proxy does not support SSH port forwarding (`-L` flag). Full SSH tunnel support will be available in V1.4 when public IP pod creation is implemented.
-
-**Current Status (V1.2):**
-- ❌ SSH tunnels: Not functional (RunPod proxy limitation)
-- ✅ HTTP proxy: Works via `--expose-http` flag
-- ✅ Tunnel infrastructure: Commands exist for V1.4 readiness
-
-**For V1.2, use HTTP proxy instead:**
-```bash
-autopod connect --expose-http    # Creates pod with HTTP proxy access
-# Access at: https://[pod-id]-8188.proxy.runpod.net
-```
-
-#### `autopod tunnel start [POD_ID]`
-Create an SSH tunnel to access services running on a pod (V1.4+)
-
-**Arguments:**
-- `[POD_ID]` - Optional pod ID (auto-selects if only one pod exists)
-
-**Options:**
-- `--local-port <PORT>` - Local port (default: 8188)
-- `--remote-port <PORT>` - Remote port on pod (default: 8188)
-
-**Examples:**
-
-Create tunnel to ComfyUI (auto-select pod):
-```bash
-autopod tunnel start
-```
-
-Create tunnel with specific ports:
-```bash
-autopod tunnel start abc-123 --local-port 8188 --remote-port 8188
-```
-
-**Note:** This command exists but will fail in V1.2 due to RunPod SSH proxy limitations. Use `--expose-http` instead.
-
-#### `autopod tunnel stop [POD_ID]`
-Stop an SSH tunnel for a pod
-
-**Examples:**
-```bash
-autopod tunnel stop abc-123
-autopod tunnel stop    # Auto-select
-```
-
-#### `autopod tunnel list`
-List all active SSH tunnels
-
-**Example:**
-```bash
-autopod tunnel list
-```
-
-**Output:**
-```
-┏━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┓
-┃ Pod ID     ┃ Status    ┃ Port      ┃ PID       ┃
-┡━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━┩
-│ abc-123    │ Active    │ 8188      │ 12345     │
-└────────────┴───────────┴───────────┴───────────┘
-```
-
-#### `autopod tunnel cleanup`
-Remove dead/stale tunnels from tracking
-
-**Example:**
-```bash
-autopod tunnel cleanup
-```
-
-#### `autopod tunnel stop-all`
-Stop all active SSH tunnels
-
-**Example:**
-```bash
-autopod tunnel stop-all
-```
-
----
-
-### ComfyUI Commands
-
-#### `autopod comfy status [POD_ID]`
-Check if ComfyUI is ready and responding
-
-**Arguments:**
-- `[POD_ID]` - Optional pod ID (auto-selects if only one pod exists)
-
-**Options:**
-- `--port <PORT>` - Local tunnel port (default: 8188)
-- `--no-tunnel` - Skip automatic tunnel creation
-
-**Examples:**
-
-Check ComfyUI status (auto-creates tunnel):
-```bash
-autopod comfy status
-```
-
-Check specific pod:
-```bash
-autopod comfy status abc-123
-```
-
-**Output (ready with HTTP proxy):**
-```
-╭─────────── ComfyUI Status: READY ───────────╮
-│ Pod ID:       abc-123                       │
-│ ComfyUI:      Ready ✓                       │
-│ Access:       https://abc-123-8188.proxy... │
-╰─────────────────────────────────────────────╯
-```
-
-**Output (not ready):**
-```
-╭────────── ComfyUI Status: NOT READY ────────╮
-│ Pod ID:       abc-123                       │
-│ ComfyUI:      Not responding ✗              │
-│ Wait Time:    ~60 seconds after pod start   │
-╰─────────────────────────────────────────────╯
-```
-
-#### `autopod comfy info [POD_ID]`
-Show detailed ComfyUI system information
-
-**Arguments:**
-- `[POD_ID]` - Optional pod ID (auto-selects if only one pod exists)
-
-**Options:**
-- `--port <PORT>` - Local tunnel port (default: 8188)
-- `--no-tunnel` - Skip automatic tunnel creation
-
-**Examples:**
-
-Get ComfyUI info (auto-creates tunnel):
-```bash
-autopod comfy info
-```
-
-Get info for specific pod:
-```bash
-autopod comfy info abc-123
-```
-
-**Output:**
-```
-╭──────────── ComfyUI Information ────────────╮
-│ Pod ID:       abc-123                       │
-│ Status:       Ready ✓                       │
-│                                             │
-│ System:                                     │
-│   Python:     3.10.12                       │
-│   RAM:        62.8 GB                       │
-│                                             │
-│ GPU 0:                                      │
-│   Name:       NVIDIA RTX A40                │
-│   VRAM:       45.6 GB                       │
-│                                             │
-│ Queue:                                      │
-│   Running:    0 jobs                        │
-│   Pending:    0 jobs                        │
-│                                             │
-│ Access:       https://abc-123-8188.proxy... │
-╰─────────────────────────────────────────────╯
 ```
 
 ---
@@ -738,11 +294,11 @@ autopod connect --gpu "RTX 4090"
 Use HTTP proxy for browser-based ComfyUI access:
 
 ```bash
-# Create pod with HTTP proxy enabled
-autopod connect --expose-http --gpu "RTX A40"
+# Create pod with ComfyUI exposed via HTTP proxy
+autopod connect --expose-comfyui --gpu "RTX A40"
 
 # Note the proxy URL from the output:
-# → ComfyUI accessible at: https://abc123xyz-8188.proxy.runpod.net
+# → ComfyUI: https://abc123xyz-8188.proxy.runpod.net
 
 # Open the URL in your browser and use ComfyUI GUI
 # (Wait ~60 seconds for ComfyUI to fully start)
@@ -758,85 +314,203 @@ autopod kill abc-123 -y
 Use the ComfyUI API client to check status and get system information:
 
 ```bash
-# Create pod with HTTP proxy enabled
-autopod connect --expose-http --gpu "RTX A40"
+# Create pod with ComfyUI exposed via HTTP proxy
+autopod connect --expose-comfyui --gpu "RTX A40"
 
-# Wait for ComfyUI to start (~60 seconds)
-autopod comfy status
-
-# Check system info, GPU, queue via API
+# Check ComfyUI status with intelligent polling (waits up to 2 minutes)
 autopod comfy info
 
-# Open ComfyUI GUI in browser (use URL from output)
+# Quick status check
+autopod comfy status
+
+# Open ComfyUI GUI in browser (use URL from comfy info output)
 # https://[pod-id]-8188.proxy.runpod.net
 
 # When done, terminate pod
 autopod kill -y
 ```
 
-**Note:** V1.2 uses HTTP proxy for browser access. SSH tunnels will be available in V1.4 for more secure localhost access.
+---
+
+### Pod Creation
+
+#### `autopod connect`
+Create and connect to a new pod
+
+**Options:**
+- `--gpu <TYPE>` - GPU type (e.g., 'RTX A40', 'RTX A5000')
+- `--gpu-count <N>` - Number of GPUs (default: 1)
+- `--disk-size <GB>` - Disk size in GB (default: 50)
+- `--datacenter <ID>` - Datacenter region (e.g., 'CA-MTL-1', 'US-GA-1')
+- `--template <NAME>` - Docker template (overrides config default)
+- `--cloud-type <TYPE>` - SECURE, COMMUNITY, or ALL (default: SECURE)
+- `--volume-id <ID>` - Network volume ID to attach (for persistent storage)
+- `--volume-mount <PATH>` - Mount path for network volume (default: /workspace)
+- `--expose <PORT>` - Expose port via HTTP proxy (can be used multiple times)
+- `--expose-comfyui` - Convenience flag to expose port 8188 (ComfyUI)
+- `--dry-run` - Show what would be created without creating
+- `--interactive` - Interactive mode with prompts (future)
+
+**Examples:**
+
+Create pod with default GPU preferences:
+```bash
+autopod connect
+```
+
+Create pod with specific GPU:
+```bash
+autopod connect --gpu "RTX A5000"
+```
+
+Create pod with ComfyUI exposed:
+```bash
+autopod connect --expose-comfyui
+```
+
+Create pod with multiple ports exposed (e.g., for ComfyUI template with FileBrowser and JupyterLab):
+```bash
+autopod connect --expose 8188 --expose 8080 --expose 8888
+```
 
 ---
 
-## Configuration
+### HTTP Port Exposure
 
-Configuration is stored in `~/.autopod/config.json` with chmod 600 (secure).
+#### Port Exposure Overview
 
-### Configuration File Structure
+By default, pods are not accessible from the internet. Use the `--expose` flag to expose specific ports through RunPod's HTTPS proxy, making services accessible from your browser.
 
-```json
-{
-  "providers": {
-    "runpod": {
-      "api_key": "your-api-key-here",
-      "ssh_key_path": "/Users/you/.ssh/id_ed25519",
-      "default_template": "runpod/comfyui:latest",
-      "default_region": "NA-US",
-      "cloud_type": "SECURE",
-      "default_volume_id": "",
-      "default_volume_mount": "/workspace"
-    }
-  },
-  "defaults": {
-    "gpu_preferences": ["RTX A40", "RTX A6000", "RTX A5000"],
-    "gpu_count": 1
-  }
-}
+**Supported Flags:**
+- `--expose <PORT>` - Expose any port (repeatable for multiple ports)
+- `--expose-comfyui` - Shorthand for `--expose 8188`
+
+**Common Ports (RunPod ComfyUI Template):**
+- `8188` - ComfyUI web interface
+- `8080` - FileBrowser (admin / adminadmin12)
+- `8888` - JupyterLab (token via JUPYTER_PASSWORD env var)
+
+**Security Notes:**
+- HTTP proxy has **no authentication by default**
+- Anyone with the URL can access your services
+- URLs format: `https://[pod-id]-[port].proxy.runpod.net`
+- Traffic is HTTPS encrypted but RunPod can inspect it
+- **Best Practice:** Only expose ports you need, terminate pods when done
+
+**Examples:**
+
+Expose only ComfyUI:
+```bash
+autopod connect --expose-comfyui
 ```
 
-### Editing Configuration
-
-You can manually edit the config file:
-
+Expose multiple services:
 ```bash
-# macOS
-open ~/.autopod/config.json
-
-# Linux
-nano ~/.autopod/config.json
+autopod connect --expose 8188 --expose 8080
 ```
 
-Or re-run the wizard:
+---
 
+### Pod Listing & Information
+
+#### `autopod list` (aliases: `ls`, `ps`)
+List all pods with status, GPU, runtime, and cost
+
+#### `autopod info [POD_ID]`
+Show detailed information about a specific pod
+
+---
+
+### SSH Access
+
+#### `autopod ssh [POD_ID]` (alias: `shell`)
+Open interactive SSH shell on a pod
+
+---
+
+### Pod Control
+
+#### `autopod stop [POD_ID]`
+Stop (pause) a pod
+
+#### `autopod start [POD_ID]` (alias: `resume`)
+Start (resume) a stopped pod
+
+#### `autopod kill [POD_ID]` (aliases: `terminate`, `rm`)
+Terminate (destroy) a pod permanently
+
+---
+
+### SSH Tunnels
+
+**Note on V1.2 Changes:**
+- **Automatic tunneling has been disabled.** The `comfy` commands now use the RunPod HTTP proxy URL by default.
+- Tunnels must be managed manually using the commands below.
+- Full SSH tunnel support for pods with public IPs is planned for V1.4.
+
+**For V1.2, use the HTTP proxy instead of manual tunnels for GUI access:**
 ```bash
-autopod config init
+# 1. Create a pod with the HTTP proxy enabled
+autopod connect --expose-comfyui
+
+# 2. Check ComfyUI status and get the proxy URL (waits up to 2 min)
+autopod comfy info
+
+# URLs are displayed in format: https://[pod-id]-8188.proxy.runpod.net
 ```
 
-### GPU Preferences Explained
+#### `autopod tunnel start [POD_ID]`
+Manually create an SSH tunnel to access a service on a pod.
 
-The `gpu_preferences` list defines fallback order:
-1. **First choice** - Tried first when you run `autopod connect`
-2. **Second choice** - Used if first is unavailable
-3. **Third choice** - Used if both above are unavailable
+**This command will likely fail with RunPod's default SSH proxy.** It is intended for use with pods that have a dedicated public IP (a V1.4 feature).
 
-Example: `["RTX A40", "RTX A6000", "RTX A5000"]`
-- Prefers RTX A40 (best value for large models)
-- Falls back to RTX A6000 if A40 unavailable
-- Falls back to RTX A5000 if both above unavailable
+#### `autopod tunnel stop [POD_ID]`
+Stop an SSH tunnel for a specific pod.
 
-You can override this with `--gpu` flag:
+#### `autopod tunnel list`
+List all active and stale SSH tunnels managed by `autopod`.
+
+#### `autopod tunnel cleanup`
+Remove dead/stale tunnels from tracking.
+
+#### `autopod tunnel stop-all`
+Stop all active SSH tunnels managed by `autopod`. This is a useful kill-switch if you have multiple tunnels running.
+
+---
+
+### ComfyUI Commands
+
+#### `autopod comfy status [POD_ID]`
+Check if ComfyUI is ready and responding on its proxy or tunnel URL.
+
+**Example:**
 ```bash
-autopod connect --gpu "RTX 4090"    # Force specific GPU
+autopod comfy status
+```
+
+**Output:**
+```
+ComfyUI Information for pod abc-123
+  URL: https://abc-123-8188.proxy.runpod.net
+✓ ComfyUI is available.
+```
+
+#### `autopod comfy info [POD_ID]`
+Show the ComfyUI URL and detailed system information from the API.
+
+**Example:**
+```bash
+autopod comfy info
+```
+
+**Output:**
+```
+ComfyUI Information for pod abc-123
+  URL: https://abc-123-8188.proxy.runpod.net
+✓ ComfyUI is available.
+╭──────────── ComfyUI Info - abc-123 ────────────╮
+│ ... (detailed system stats) ...                │
+╰────────────────────────────────────────────────╯
 ```
 
 ---
