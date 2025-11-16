@@ -597,6 +597,29 @@ This is expected behavior - GPU availability is not guaranteed. Options:
    autopod connect --gpu "RTX 4090"
    ```
 
+### Verbose Logging / Debugging
+
+**Enable verbose output for troubleshooting:**
+
+```bash
+# Using command-line flag (recommended)
+autopod --verbose info
+autopod -v connect
+
+# Using environment variable
+AUTOPOD_DEBUG=1 autopod info
+```
+
+**Default behavior:**
+- Console: Only shows warnings and errors (quiet)
+- Log file: Captures everything (`~/.autopod/logs/autopod.log`)
+
+**When to use verbose mode:**
+- Debugging connection issues
+- Troubleshooting API errors
+- Understanding what autopod is doing
+- Reporting bugs
+
 ### GPU Not Available
 
 **Symptom:** `No GPUs available from preferences`
